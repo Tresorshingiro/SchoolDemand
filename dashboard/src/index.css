@@ -1,0 +1,151 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: light;
+  --page: #f9f9f7;
+  --surface: #fcfcfb;
+  --ink: #0b0b0b;
+  --ink-2: #52514e;
+  --muted: #898781;
+  --line: rgba(11, 11, 11, 0.1);
+  --accent: #2a78d6;
+  --accent-soft: rgba(42, 120, 214, 0.1);
+  --deficit: #e34948;
+  --deficit-soft: rgba(227, 73, 72, 0.1);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    color-scheme: dark;
+    --page: #0d0d0d;
+    --surface: #1a1a19;
+    --ink: #ffffff;
+    --ink-2: #c3c2b7;
+    --muted: #898781;
+    --line: rgba(255, 255, 255, 0.1);
+    --accent: #3987e5;
+    --accent-soft: rgba(57, 135, 229, 0.16);
+    --deficit: #e66767;
+    --deficit-soft: rgba(230, 103, 103, 0.16);
+  }
+}
+
+:root[data-theme='dark'] {
+  color-scheme: dark;
+  --page: #0d0d0d;
+  --surface: #1a1a19;
+  --ink: #ffffff;
+  --ink-2: #c3c2b7;
+  --muted: #898781;
+  --line: rgba(255, 255, 255, 0.1);
+  --accent: #3987e5;
+  --accent-soft: rgba(57, 135, 229, 0.16);
+  --deficit: #e66767;
+  --deficit-soft: rgba(230, 103, 103, 0.16);
+}
+
+html,
+body {
+  background: var(--page);
+  color: var(--ink);
+}
+
+body {
+  margin: 0;
+  font-family: system-ui, -apple-system, 'Segoe UI', sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+
+.num {
+  font-variant-numeric: tabular-nums;
+}
+
+select,
+input {
+  background: var(--surface);
+  color: var(--ink);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+
+select:focus-visible,
+input:focus-visible,
+button:focus-visible,
+tr:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+/* ArcGIS view: no focus ring box around the whole map canvas */
+.esri-view .esri-view-surface--inset-outline:focus::after {
+  outline: none !important;
+}
+
+/* ------------------------------------------------------------------ printed report (Download PDF, see src/print.ts) */
+@page {
+  size: A4 landscape;
+  margin: 10mm;
+}
+
+/* While printing, lay the app out at the printable width of A4 landscape (277 mm ≈ 1040 px) so the charts
+   resize to the page instead of being cut off. */
+html.printing .print-frame {
+  width: 1040px;
+  margin: 0 auto;
+}
+
+html.printing .print-expand {
+  max-height: none !important;
+  overflow: visible !important;
+}
+
+@media print {
+  html,
+  body {
+    background: #fff !important;
+  }
+  * {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+  .sticky {
+    position: static !important;
+  }
+  .card {
+    break-inside: avoid;
+  }
+  .esri-ui {
+    display: none !important;
+  }
+}
+
+/* Report layout: fixed columns, the same while laying out (html.printing) and on paper, so the charts
+   sized in the first phase fit the second (the print viewport is narrower than the lg breakpoint). */
+html.printing .print-cols-2 { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; }
+html.printing .print-cols-3 { grid-template-columns: repeat(3, minmax(0, 1fr)) !important; }
+html.printing .print-cols-5 { grid-template-columns: repeat(5, minmax(0, 1fr)) !important; }
+html.printing .print-cols-tiles { grid-template-columns: 4fr 3fr !important; }
+html.printing .print-span-2 { grid-column: span 2 / span 2 !important; }
+html.printing .print-span-3 { grid-column: span 3 / span 3 !important; }
+html.printing .print-tiles-4 { grid-template-columns: repeat(4, minmax(0, 1fr)) !important; }
+html.printing .print-tiles-3 { grid-template-columns: repeat(3, minmax(0, 1fr)) !important; }
+html.printing .print-tiles-3 > * { grid-column: auto !important; }
+
+@media print {
+  .print-keep-next {
+    break-after: avoid;
+  }
+  tr {
+    break-inside: avoid;
+  }
+}
+html.printing .print-map { height: 560px !important; min-height: 0 !important; align-self: start; }
+html.printing .print-cell { display: table-cell !important; }

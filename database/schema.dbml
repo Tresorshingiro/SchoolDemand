@@ -1,0 +1,497 @@
+Project school_planning {
+  database_type: 'PostgreSQL'
+  Note: 'Classroom and teacher planning for all levels: MINEDUC school data (API) + NISR village-level demand'
+}
+
+// =====================================================================
+// Enums
+// =====================================================================
+Enum sex_type {
+  male
+  female
+}
+
+Enum shift_type {
+  full_day
+  morning
+  afternoon
+}
+
+Enum school_ownership {
+  public
+  government_aided
+  private
+}
+
+Enum classroom_condition {
+  good
+  needs_repair
+  unusable
+  under_construction
+}
+
+Enum import_status {
+  running
+  success
+  partial
+  failed
+}
+
+Enum intake_source {
+  nisr
+  manual
+  csv_upload
+}
+
+// =====================================================================
+// Administrative units (NISR codes)
+// =====================================================================
+Table provinces {
+  id smallint [pk, increment]
+  code varchar(10) [unique, not null]
+  name varchar(100) [not null]
+}
+
+Table districts {
+  id smallint [pk, increment]
+  code varchar(10) [unique, not null]
+  province_id smallint [not null, ref: > provinces.id]
+  name varchar(100) [not null]
+}
+
+Table sectors {
+  id int [pk, increment]
+  code varchar(10) [unique, not null]
+  district_id smallint [not null, ref: > districts.id]
+  name varchar(100) [not null]
+}
+
+Table cells {
+  id int [pk, increment]
+  code varchar(12) [unique, not null]
+  sector_id int [not null, ref: > sectors.id]
+  name varchar(100) [not null]
+}
+
+Table villages {
+  id int [pk, increment]
+  code varchar(14) [unique, not null, note: 'NISR village (umudugudu) code']
+  cell_id int [not null, ref: > cells.id]
+  name varchar(100) [not null]
+  latitude numeric(9,6)
+  longitude numeric(9,6)
+}
+
+// =====================================================================
+// Reference data
+// =====================================================================
+Table academic_years {
+  id smallint [pk, increment]
+  year smallint [unique, not null, note: 'e.g. 2026']
+  start_date date
+  end_date date
+}
+
+Table school_levels {
+  id smallint [pk, increment]
+  code varchar(5) [unique, not null, note: 'NUR, PRI, LSE, USE, TVET, TTC']
+  name varchar(50) [not null]
+  entry_age smallint [note: 'official entry age: NUR 3, PRI 6, LSE 12, USE 15']
+  duration_years smallint [not null]
+  sort_order smallint [not null]
+}
+
+Table grades {
+  id smallint [pk, increment]
+  code varchar(5) [unique, not null, note: 'N1..N3, P1..P6, S1..S6, L1..L5, Y1..Y3']
+  level_id smallint [not null, ref: > school_levels.id]
+  sequence smallint [not null, note: '1 = entry grade of the level']
+  next_grade_id smallint [ref: > grades.id, note: 'progression path; P6 -> S1, S3 -> S4; null = leaves the system']
+}
+
+Table level_norms {
+  id int [pk, increment]
+  level_id smallint [not null, ref: > school_levels.id]
+  academic_year_id smallint [not null, ref: > academic_years.id]
+  classroom_capacity smallint [not null, default: 45]
+  pupil_teacher_ratio numeric(5,2) [note: 'official norm, used for teachers required']
+  max_groups_per_room smallint [default: 2, note: 'double shift limit']
+
+  indexes {
+    (level_id, academic_year_id) [unique]
+  }
+}
+
+Table subjects {
+  id smallint [pk, increment]
+  code varchar(20) [unique, not null]
+  name varchar(100) [not null]
+  level_id smallint [ref: > school_levels.id, note: 'null = taught at several levels']
+}
+
+// =====================================================================
+// Schools, classrooms, class groups (MINEDUC API)
+// =====================================================================
+Table schools {
+  id int [pk, increment]
+  mineduc_code varchar(20) [unique, not null, note: 'school_code from the MINEDUC API']
+  name varchar(200) [not null]
+  village_id int [ref: > villages.id, note: 'location; district and sector derived through the hierarchy']
+  latitude numeric(9,6)
+  longitude numeric(9,6)
+  ownership school_ownership
+  is_boarding boolean [default: false]
+  opened_year smallint
+  closed_year smallint
+  is_active boolean [not null, default: true]
+  import_run_id bigint [ref: > import_runs.id]
+  updated_at timestamptz [not null, default: `now()`]
+}
+
+Table school_level_offerings {
+  school_id int [ref: > schools.id]
+  level_id smallint [ref: > school_levels.id]
+  academic_year_id smallint [ref: > academic_years.id]
+
+  indexes {
+    (school_id, level_id, academic_year_id) [pk]
+  }
+  Note: 'Which levels a school offers each year'
+}
+
+Table classrooms {
+  id int [pk, increment]
+  school_id int [not null, ref: > schools.id]
+  mineduc_classroom_id varchar(30) [not null, note: 'classroom_id from the API']
+  name varchar(100)
+  seat_capacity smallint [note: 'designed seats; null = use level_norms.classroom_capacity']
+  condition classroom_condition [default: 'good']
+  built_year smallint
+  is_active boolean [not null, default: true]
+  import_run_id bigint [ref: > import_runs.id]
+
+  indexes {
+    (school_id, mineduc_classroom_id) [unique]
+  }
+  Note: 'One row per PHYSICAL room. Rooms available = count of active usable rooms.'
+}
+
+Table class_groups {
+  id bigint [pk, increment]
+  academic_year_id smallint [not null, ref: > academic_years.id]
+  school_id int [not null, ref: > schools.id]
+  grade_id smallint [not null, ref: > grades.id]
+  name varchar(20) [not null, note: 'e.g. P1A']
+  combination varchar(50) [note: 'subject combination (upper secondary / TVET)']
+  classroom_id int [ref: > classrooms.id, note: 'room used; several groups in one room = double shift']
+  shift shift_type [default: 'full_day']
+  students_total int [not null]
+  students_male int
+  students_female int
+  import_run_id bigint [ref: > import_runs.id]
+
+  indexes {
+    (academic_year_id, school_id, grade_id, name) [unique]
+    (academic_year_id, classroom_id)
+  }
+  Note: 'The roster: one row per class group (the current Excel source)'
+}
+
+Table enrollment_by_age {
+  id bigint [pk, increment]
+  academic_year_id smallint [not null, ref: > academic_years.id]
+  school_id int [not null, ref: > schools.id]
+  grade_id smallint [not null, ref: > grades.id]
+  age smallint [not null]
+  sex sex_type [not null]
+  students int [not null]
+  import_run_id bigint [ref: > import_runs.id]
+
+  indexes {
+    (academic_year_id, school_id, grade_id, age, sex) [unique]
+  }
+  Note: 'Optional, if the API provides it: enables over-age analysis later'
+}
+
+// =====================================================================
+// Teachers (MINEDUC API)
+// =====================================================================
+Table teachers {
+  id int [pk, increment]
+  mineduc_teacher_id varchar(30) [unique, not null]
+  sex sex_type
+  birth_year smallint
+  qualification varchar(50) [note: 'A2, A1, A0, Masters...']
+  specialization varchar(100)
+  is_active boolean [not null, default: true]
+  import_run_id bigint [ref: > import_runs.id]
+}
+
+Table teacher_postings {
+  id bigint [pk, increment]
+  teacher_id int [not null, ref: > teachers.id]
+  school_id int [not null, ref: > schools.id]
+  academic_year_id smallint [not null, ref: > academic_years.id]
+  level_id smallint [ref: > school_levels.id, note: 'main level taught']
+  position varchar(50) [note: 'teacher, head teacher, DOS...']
+  employment_type varchar(30) [note: 'permanent, contract, volunteer']
+  fte numeric(3,2) [not null, default: 1]
+  start_date date
+  end_date date
+  import_run_id bigint [ref: > import_runs.id]
+
+  indexes {
+    (teacher_id, school_id, academic_year_id) [unique]
+  }
+}
+
+Table teaching_assignments {
+  id bigint [pk, increment]
+  posting_id bigint [not null, ref: > teacher_postings.id]
+  class_group_id bigint [not null, ref: > class_groups.id]
+  subject_id smallint [ref: > subjects.id]
+  weekly_periods smallint
+
+  indexes {
+    (posting_id, class_group_id, subject_id) [unique]
+  }
+}
+
+// =====================================================================
+// Demand (NISR, village level)
+// =====================================================================
+Table population_estimates {
+  id bigint [pk, increment]
+  village_id int [not null, ref: > villages.id]
+  year smallint [not null]
+  age smallint [not null, note: 'single year of age; new entrants = age = level entry_age']
+  sex sex_type [note: 'null when NISR gives both sexes together']
+  population int [not null]
+  import_run_id bigint [not null, ref: > import_runs.id]
+
+  indexes {
+    (village_id, year, age, sex, import_run_id) [unique]
+    (year, age)
+  }
+  Note: 'School-age demand from NISR, village x year x age'
+}
+
+Table school_catchments {
+  id int [pk, increment]
+  village_id int [not null, ref: > villages.id]
+  school_id int [not null, ref: > schools.id]
+  level_id smallint [not null, ref: > school_levels.id]
+  share numeric(6,5) [not null, note: 'part of the village demand sent to this school; sums to 1 per village + level']
+  method varchar(30) [note: 'enrolment_share, nearest_school, manual']
+  valid_from_year smallint
+
+  indexes {
+    (village_id, school_id, level_id, valid_from_year) [unique]
+  }
+  Note: 'How village demand is allocated to schools'
+}
+
+// =====================================================================
+// Data ingestion and quality
+// =====================================================================
+Table data_sources {
+  id smallint [pk, increment]
+  code varchar(30) [unique, not null, note: 'MINEDUC_API, NISR']
+  name varchar(100) [not null]
+  base_url text
+}
+
+Table import_runs {
+  id bigint [pk, increment]
+  source_id smallint [not null, ref: > data_sources.id]
+  endpoint varchar(200) [note: 'API endpoint or file name']
+  academic_year_id smallint [ref: > academic_years.id]
+  started_at timestamptz [not null, default: `now()`]
+  finished_at timestamptz
+  status import_status [not null, default: 'running']
+  rows_received int
+  rows_loaded int
+  params jsonb
+  error text
+}
+
+Table data_quality_issues {
+  id bigint [pk, increment]
+  import_run_id bigint [ref: > import_runs.id]
+  academic_year_id smallint [ref: > academic_years.id]
+  school_id int [ref: > schools.id]
+  entity varchar(50) [not null, note: 'table the issue is about']
+  entity_id bigint
+  issue_code varchar(50) [not null, note: 'grade_mismatch, large_group, missing_coordinates...']
+  detail text
+  is_resolved boolean [not null, default: false]
+  created_at timestamptz [not null, default: `now()`]
+}
+
+// =====================================================================
+// Projections (planning scenarios)
+// =====================================================================
+Table projection_scenarios {
+  id int [pk, increment]
+  name varchar(100) [not null]
+  description text
+  base_year_id smallint [not null, ref: > academic_years.id]
+  end_year smallint [not null]
+  is_default boolean [not null, default: false]
+  created_by varchar(100)
+  created_at timestamptz [not null, default: `now()`]
+}
+
+Table scenario_level_parameters {
+  scenario_id int [ref: > projection_scenarios.id]
+  level_id smallint [ref: > school_levels.id]
+  classroom_capacity smallint [not null, default: 45]
+  pupil_teacher_ratio numeric(5,2)
+
+  indexes {
+    (scenario_id, level_id) [pk]
+  }
+  Note: 'Overrides level_norms for this scenario'
+}
+
+Table scenario_intake {
+  id bigint [pk, increment]
+  scenario_id int [not null, ref: > projection_scenarios.id]
+  year smallint [not null]
+  level_id smallint [not null, ref: > school_levels.id, note: 'new entrants to the entry grade: N1, P1']
+  district_id smallint [not null, ref: > districts.id]
+  sector_id int [ref: > sectors.id, note: 'null = whole district']
+  village_id int [ref: > villages.id, note: 'null = whole sector / district']
+  new_entrants int [not null]
+  source intake_source [not null, default: 'nisr']
+
+  indexes {
+    (scenario_id, year, level_id, district_id, sector_id, village_id) [unique]
+  }
+  Note: 'Editable intake plan (today: P1 per district). Finest area known is filled.'
+}
+
+Table scenario_transition_rates {
+  id int [pk, increment]
+  scenario_id int [not null, ref: > projection_scenarios.id]
+  from_grade_id smallint [not null, ref: > grades.id, note: 'e.g. P6, S3']
+  to_grade_id smallint [not null, ref: > grades.id, note: 'e.g. S1, S4']
+  district_id smallint [ref: > districts.id, note: 'null = national rate']
+  rate numeric(5,4) [not null, note: 'share of the cohort that continues']
+
+  indexes {
+    (scenario_id, from_grade_id, to_grade_id, district_id) [unique]
+  }
+  Note: 'Transitions between levels (P6 -> S1, S3 -> S4). Inside a level every child moves up one grade.'
+}
+
+Table scenario_new_classrooms {
+  id int [pk, increment]
+  scenario_id int [not null, ref: > projection_scenarios.id]
+  school_id int [not null, ref: > schools.id]
+  level_id smallint [ref: > school_levels.id]
+  year smallint [not null, note: 'first year the rooms can be used']
+  rooms int [not null]
+  Note: 'Planned construction; empty = no new rooms'
+}
+
+Table projection_runs {
+  id bigint [pk, increment]
+  scenario_id int [not null, ref: > projection_scenarios.id]
+  run_at timestamptz [not null, default: `now()`]
+  algorithm_version varchar(20)
+  status import_status [not null, default: 'running']
+}
+
+Table projection_grade_results {
+  run_id bigint [ref: > projection_runs.id]
+  school_id int [ref: > schools.id]
+  year smallint
+  grade_id smallint [ref: > grades.id]
+  students int [not null]
+  class_groups int [not null]
+  rooms_assigned int [not null]
+  double_shift int [not null]
+  required_rooms int [not null]
+  gap int [not null]
+
+  indexes {
+    (run_id, school_id, year, grade_id) [pk]
+  }
+}
+
+Table projection_school_results {
+  run_id bigint [ref: > projection_runs.id]
+  school_id int [ref: > schools.id]
+  year smallint
+  level_id smallint [ref: > school_levels.id]
+  students int [not null]
+  class_groups int [not null]
+  rooms int [not null]
+  double_shift int [not null]
+  required_rooms int [not null]
+  gap int [not null]
+  teachers_available numeric(7,2)
+  teachers_required int
+  teacher_gap numeric(7,2)
+
+  indexes {
+    (run_id, school_id, year, level_id) [pk]
+    (run_id, year, level_id)
+  }
+}
+
+// =====================================================================
+// Groups (colour blocks in dbdiagram)
+// =====================================================================
+TableGroup admin_units {
+  provinces
+  districts
+  sectors
+  cells
+  villages
+}
+
+TableGroup reference {
+  academic_years
+  school_levels
+  grades
+  level_norms
+  subjects
+}
+
+TableGroup mineduc_schools {
+  schools
+  school_level_offerings
+  classrooms
+  class_groups
+  enrollment_by_age
+}
+
+TableGroup mineduc_teachers {
+  teachers
+  teacher_postings
+  teaching_assignments
+}
+
+TableGroup nisr_demand {
+  population_estimates
+  school_catchments
+}
+
+TableGroup ingestion {
+  data_sources
+  import_runs
+  data_quality_issues
+}
+
+TableGroup projections {
+  projection_scenarios
+  scenario_level_parameters
+  scenario_intake
+  scenario_transition_rates
+  scenario_new_classrooms
+  projection_runs
+  projection_grade_results
+  projection_school_results
+}
