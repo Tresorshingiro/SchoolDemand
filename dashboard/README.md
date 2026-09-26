@@ -1,15 +1,17 @@
 # Classroom Sufficiency Dashboard 2026
 
 React + Vite + TypeScript + Tailwind, with an ArcGIS (`@arcgis/core`) map — same stack as BTS `ecofleet-web`.
-No backend: the data is three static JSON files in `public/data/`, exported from the Python analysis.
+All data comes from the FastAPI backend (`../backend`, calls in `src/api.ts`): the 2026 dataset, the district /
+sector boundaries, the projection runs and the saved plans.
 
 ## Run
 
 ```powershell
 npm install
-npm run data      # re-export public/data from the source roster (python scripts/export_dashboard_data.py)
-npm run dev       # http://localhost:5173
+npm run dev       # http://localhost:5173 — /api is forwarded to the API on http://127.0.0.1:8000 (vite.config.ts)
 ```
+
+Start the API first (see `../backend/README.md`); `API_PROXY_TARGET` points the dev server at another one.
 
 ## Deploy
 
@@ -17,8 +19,9 @@ npm run dev       # http://localhost:5173
 npm run build     # output in dist/
 ```
 
-Copy `dist/` to any static web server (IIS, nginx, an internal share). It uses relative paths, so it works from a sub-folder.
-Viewers need internet access to `js.arcgis.com` and `services.arcgisonline.com` for the map; everything else is local.
+Serve `dist/` with `/api` forwarded to the API: nginx in the Docker setup (`nginx.conf`, `Dockerfile`), IIS with
+`../deploy/windows/web.config` on Windows — see `../deploy/README.md`. When the API lives elsewhere, build with
+`VITE_API_URL`. Viewers need internet access to `js.arcgis.com` and `services.arcgisonline.com` for the map.
 
 ## Map
 
@@ -26,7 +29,7 @@ Viewers need internet access to `js.arcgis.com` and `services.arcgisonline.com` 
   with the World Boundaries and Places labels. Neither needs an API key; falls back satellite -> canvas -> OpenStreetMap.
   The viewer's choice is remembered in their browser.
 - Optional: set `VITE_ARCGIS_TOKEN` in `.env` to use an Esri API key.
-- Schools are drawn from the JSON as a `GeoJSONLayer` built in the browser (the BTS `featureLayers.ts` pattern).
+- Schools are drawn from the API data as a `GeoJSONLayer` built in the browser (the BTS `featureLayers.ts` pattern).
   Schools with missing or out-of-Rwanda coordinates are left off the map but stay in the table.
 - **Satellite imagery is the default**; everything outside Rwanda is shaded and the view cannot pan away from Rwanda.
 - **Clusters / Schools** switch: clusters group nearby schools (colour = average gap, label = number of schools; hover for
@@ -39,8 +42,9 @@ Viewers need internet access to `js.arcgis.com` and `services.arcgisonline.com` 
   or a class (10+ short … 10+ spare) to hide or show those schools; it holds the Clusters / Schools switch and the
   District / Sector boundary checkboxes. **Find a school** (top left) searches the schools in view.
 - District names show from about zoom 9 (at national zoom the clusters and district outlines carry the view).
-- Boundaries: `public/data/districts.geojson`, `sectors.geojson`, `rwanda.geojson`, built by
-  `python scripts/build_boundaries.py` from geoBoundaries (Open Data Rwanda 2012, CC BY 4.0), names matched to the roster.
+- Boundaries: `GET /api/boundaries/{country,districts,sectors}` (PostGIS), loaded from `data-sources/boundaries/` by
+  the import job; those files come from `python scripts/build_boundaries.py` (geoBoundaries, Open Data Rwanda 2012,
+  CC BY 4.0, names matched to the roster).
 
 ## Page
 
@@ -59,8 +63,10 @@ New students:
   - **S4 / L3 / Y1** = all S3 students of the district the year before, split by the district's 2026 mix.
   - TVET L1–L2 short courses are not projected.
 
-  The whole page recalculates in the browser (`src/projection.ts`, same algorithm as `scripts/projection.py`). A viewer's
-  plan is saved in their own browser only — share a plan by sending the CSV.
+  The projection is calculated on the server (`POST /api/projection/run`, ≈2 s for a new plan, then cached); the page
+  keeps showing the previous result with "Recalculating…" meanwhile. **Saved plans**: the Plan bar above the intake
+  table opens, saves, saves as and deletes plans stored in the database — shared with everyone who uses the
+  dashboard. The browser remembers the plan on screen (and unsaved edits) between visits.
 
   Excel copy of a plan: `python scripts/build_projection_workbook.py --intake intake_plan.csv`.
 
@@ -73,13 +79,11 @@ snapshot and the first 25 schools of the table in its current sort. It opens the
 
 ## Numbers
 
-All figures come from `scripts/analysis.py` and `scripts/projection.py`, the same modules that build the Excel
-outputs (`School_Classroom_Analysis_2026.xlsx`, `Classroom_Projection_2026_2030_*.xlsx` via
-`python scripts/build_projection_workbook.py`), so the dashboard and workbooks always agree. If you change the
-projection rules, change both `scripts/projection.py` and `src/projection.ts` — they were checked to give identical
-results for every school, grade and year.
+All figures come from `backend/app/domain/analysis.py` and `projection.py` — one engine, used by the API and by the
+Excel scripts (`School_Classroom_Analysis_2026.xlsx`, `Classroom_Projection_2026_2030_*.xlsx`), so the dashboard and
+workbooks always agree. The browser only displays and filters them.
 Capacity is 45 students per classroom for every level.
 
-To update the projection with new catchment figures, replace `Chachement area.xlsx` (same columns: `school_code`,
-`N1`, `Pop2027` … `Pop2030`), then run `npm run data` and `python scripts/build_projection_workbook.py`. Once real
-2030 figures arrive, remove 2030 from `ESTIMATED` in `scripts/projection.py`.
+To update the data, replace the files in `data-sources/` (same columns), run the import job
+(`python -m etl.load_version2` in `backend/`) and restart the API. Once real 2030 catchment figures arrive, remove
+2030 from `ESTIMATED` in `backend/app/domain/projection.py`.

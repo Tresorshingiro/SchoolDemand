@@ -1,0 +1,9 @@
+# Unix line endings in the repository (the Linux containers need them for scripts and configs);
+# Windows-only scripts keep CRLF. Binary data files are never touched.
+* text=auto eol=lf
+*.ps1 text eol=crlf
+*.cmd text eol=crlf
+*.bat text eol=crlf
+*.xlsx binary
+*.docx binary
+*.png binary

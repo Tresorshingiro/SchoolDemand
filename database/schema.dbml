@@ -45,7 +45,16 @@ Enum intake_source {
 
 // =====================================================================
 // Administrative units (NISR codes)
+// Built today (backend/app/models.py): countries, provinces, districts, sectors — with outlines (PostGIS);
+// codes are the upper-case names until NISR codes are loaded. Cells and villages wait for the NISR data.
 // =====================================================================
+Table countries {
+  id smallint [pk, increment]
+  code varchar(3) [unique, not null, note: 'RWA']
+  name varchar(100) [not null]
+  geom geometry [note: 'MultiPolygon, EPSG:4326 — the map masks everything outside it']
+}
+
 Table provinces {
   id smallint [pk, increment]
   code varchar(10) [unique, not null]
@@ -57,6 +66,7 @@ Table districts {
   code varchar(10) [unique, not null]
   province_id smallint [not null, ref: > provinces.id]
   name varchar(100) [not null]
+  geom geometry [note: 'MultiPolygon, EPSG:4326']
 }
 
 Table sectors {
@@ -64,6 +74,7 @@ Table sectors {
   code varchar(10) [unique, not null]
   district_id smallint [not null, ref: > districts.id]
   name varchar(100) [not null]
+  geom geometry [note: 'MultiPolygon, EPSG:4326']
 }
 
 Table cells {
@@ -99,6 +110,7 @@ Table school_levels {
   entry_age smallint [note: 'official entry age: NUR 3, PRI 6, LSE 12, USE 15']
   duration_years smallint [not null]
   sort_order smallint [not null]
+  full_day boolean [not null, default: false, note: 'secondary, TVET, TTC: no double shift, every class group needs a room']
 }
 
 Table grades {
@@ -162,7 +174,8 @@ Table school_level_offerings {
 Table classrooms {
   id int [pk, increment]
   school_id int [not null, ref: > schools.id]
-  mineduc_classroom_id varchar(30) [not null, note: 'classroom_id from the API']
+  mineduc_classroom_id varchar(64) [not null, note: 'physical room ID (test_code in Version 2.xlsx)']
+  source_classroom_id varchar(64) [note: 'classroom_id as recorded in the roster (before the 3+ groups split)']
   name varchar(100)
   seat_capacity smallint [note: 'designed seats; null = use level_norms.classroom_capacity']
   condition classroom_condition [default: 'good']
@@ -276,6 +289,20 @@ Table population_estimates {
   Note: 'School-age demand from NISR, village x year x age'
 }
 
+Table catchment_population {
+  id bigint [pk, increment]
+  school_id int [not null, ref: > schools.id]
+  year smallint [not null]
+  age smallint [not null, note: '3 = N1 entrants']
+  population int [not null]
+  import_run_id bigint [ref: > import_runs.id]
+
+  indexes {
+    (school_id, year, age) [unique]
+  }
+  Note: 'Built today: children of an age in a pre-primary school catchment (GIS split of NISR population, Chachement area.xlsx). A missing year takes the last known value.'
+}
+
 Table school_catchments {
   id int [pk, increment]
   village_id int [not null, ref: > villages.id]
@@ -358,7 +385,7 @@ Table scenario_intake {
   id bigint [pk, increment]
   scenario_id int [not null, ref: > projection_scenarios.id]
   year smallint [not null]
-  level_id smallint [not null, ref: > school_levels.id, note: 'new entrants to the entry grade: N1, P1']
+  grade_id smallint [not null, ref: > grades.id, note: 'entry grade whose new entrants are planned: N1 (P1 follows N3)']
   district_id smallint [not null, ref: > districts.id]
   sector_id int [ref: > sectors.id, note: 'null = whole district']
   village_id int [ref: > villages.id, note: 'null = whole sector / district']
@@ -366,9 +393,9 @@ Table scenario_intake {
   source intake_source [not null, default: 'nisr']
 
   indexes {
-    (scenario_id, year, level_id, district_id, sector_id, village_id) [unique]
+    (scenario_id, year, grade_id, district_id) [unique]
   }
-  Note: 'Editable intake plan (today: P1 per district). Finest area known is filled.'
+  Note: 'Editable intake plan, saved from the dashboard (today: N1 per district, sector / village not used yet).'
 }
 
 Table scenario_transition_rates {
@@ -445,6 +472,7 @@ Table projection_school_results {
 // Groups (colour blocks in dbdiagram)
 // =====================================================================
 TableGroup admin_units {
+  countries
   provinces
   districts
   sectors
@@ -475,6 +503,7 @@ TableGroup mineduc_teachers {
 }
 
 TableGroup nisr_demand {
+  catchment_population
   population_estimates
   school_catchments
 }

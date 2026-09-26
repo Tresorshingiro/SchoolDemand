@@ -19,7 +19,9 @@ services:
     volumes:
       - pgdata:/var/lib/postgresql/data
     ports:
-      - "${DB_PORT:-5433}:5432"   # 5433 on the host: a local PostgreSQL may already use 5432
+      # This machine only (development tools, the import job run from source); 5433 because a local PostgreSQL
+      # may already use 5432. The API container reaches the database on the internal network.
+      - "127.0.0.1:${DB_PORT:-5433}:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
       interval: 5s

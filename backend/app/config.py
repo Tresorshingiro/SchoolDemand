@@ -4,9 +4,14 @@ from __future__ import annotations
 from functools import cached_property
 from pathlib import Path
 
+from dotenv import load_dotenv
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 BACKEND = Path(__file__).resolve().parents[1]
+# Into the environment too (real environment variables win): SCHOOL_DATA_DIR / SCHOOL_CACHE_DIR are read by
+# app.domain.analysis, which is not a settings class.
+for _env in (BACKEND / ".env", BACKEND.parent / "deploy" / ".env"):
+    load_dotenv(_env, override=False)
 
 
 class Settings(BaseSettings):
