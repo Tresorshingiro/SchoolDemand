@@ -4,7 +4,7 @@ import type { Mode } from '../theme';
 import { EntrantsChart } from './Charts';
 import {
   intakeFromCsv, intakeToCsv, sameIntake,
-  type Intake, type ProjectionBase,
+  type Intake, type ProjectionBase, type Scenario, type ScenarioSummary,
 } from '../projection';
 
 /** Number cell that commits on Enter or blur, so the projection is not recomputed on every keystroke. */
@@ -37,6 +37,75 @@ function IntakeCell({ value, defaults, label, onCommit }: { value: number; defau
   );
 }
 
+/** Saved plans (scenarios in the database), handled by the projection page. */
+export interface ScenarioControls {
+  list: ScenarioSummary[];
+  active: Scenario | null;
+  dirty: boolean; // the plan on screen differs from the saved one
+  busy: boolean;
+  message: string | null;
+  defaultLabel: string;
+  onOpen: (id: number | null) => void;
+  onSave: () => void;
+  onSaveAs: (name: string) => void;
+  onDelete: () => void;
+}
+
+/** Open / save / save as / delete a shared plan. */
+function ScenarioBar({ s }: { s: ScenarioControls }) {
+  const [naming, setNaming] = useState(false);
+  const [name, setName] = useState('');
+  const btn = 'rounded-md border border-line px-3 py-1 text-ink2 hover:text-ink disabled:opacity-50 disabled:hover:text-ink2';
+  const submit = () => {
+    if (!name.trim()) return;
+    s.onSaveAs(name.trim());
+    setNaming(false);
+    setName('');
+  };
+  return (
+    <div className="mb-3 rounded-md border border-line bg-[var(--line)] px-3 py-2 print:hidden">
+      <div className="flex flex-wrap items-center gap-2 text-sm">
+        <label className="flex items-center gap-2 text-ink2">
+          Plan
+          <select aria-label="Open a saved plan" className="h-8 max-w-[260px] px-2 text-sm font-medium text-ink" disabled={s.busy}
+            value={s.active?.id ?? ''} onChange={(e) => s.onOpen(e.target.value === '' ? null : Number(e.target.value))}>
+            <option value="">{s.defaultLabel} (default)</option>
+            {s.list.map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}
+          </select>
+        </label>
+        {s.dirty && <span className="text-xs font-medium text-accent">unsaved changes</span>}
+        <button type="button" className={btn} disabled={s.busy || !s.active || !s.dirty} onClick={s.onSave}
+          title={s.active ? `Save the changes to "${s.active.name}"` : 'Open a saved plan to save changes to it'}>
+          Save
+        </button>
+        {naming ? (
+          <span className="flex items-center gap-1">
+            <input autoFocus value={name} maxLength={100} placeholder="Name of the new plan" aria-label="Name of the new plan"
+              onChange={(e) => setName(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') submit();
+                if (e.key === 'Escape') setNaming(false);
+              }}
+              className="h-8 w-56 px-2 text-sm" />
+            <button type="button" className={btn} disabled={s.busy || !name.trim()} onClick={submit}>Save</button>
+            <button type="button" className="px-2 text-sm text-muted hover:text-ink" onClick={() => setNaming(false)}>Cancel</button>
+          </span>
+        ) : (
+          <button type="button" className={btn} disabled={s.busy} onClick={() => setNaming(true)}>Save as new plan…</button>
+        )}
+        {s.active && (
+          <button type="button" className="px-2 text-sm text-[var(--deficit)] hover:underline disabled:opacity-50" disabled={s.busy}
+            onClick={s.onDelete}>
+            Delete
+          </button>
+        )}
+        <span className="ml-auto text-xs text-muted">Saved plans are shared with everyone who uses the dashboard.</span>
+      </div>
+      {s.message && <p className="mt-1.5 text-xs text-ink2" role="status">{s.message}</p>}
+    </div>
+  );
+}
+
 interface Props {
   base: ProjectionBase;
   intake: Intake;
@@ -48,10 +117,12 @@ interface Props {
   /** District picked in the page filter: show only its row. */
   district?: string;
   mode: Mode;
+  /** Saved plans; without it the planner only edits the plan on screen. */
+  scenarios?: ScenarioControls | null;
 }
 
-/** District x year table of new N1 or P1 students; drives the whole projection page. */
-export default function IntakePlanner({ base, intake, onChange, grade, baseByDistrict, district, mode }: Props) {
+/** District x year table of new N1 students; drives the whole projection page. */
+export default function IntakePlanner({ base, intake, onChange, grade, baseByDistrict, district, mode, scenarios }: Props) {
   const years = base.years.slice(1);
   const defaults = base.population[grade];
   const estimated = new Set(base.estimated[grade] ?? []);
@@ -96,6 +167,7 @@ export default function IntakePlanner({ base, intake, onChange, grade, baseByDis
 
   return (
     <div className="px-4 pb-4">
+      {scenarios && <ScenarioBar s={scenarios} />}
       <div className="mb-3 flex flex-wrap items-center gap-2 text-sm print:hidden">
         <button type="button" onClick={reset} disabled={isNisr}
           className="rounded-md border border-line px-3 py-1 text-ink2 hover:text-ink disabled:opacity-50 disabled:hover:text-ink2">
@@ -113,7 +185,7 @@ export default function IntakePlanner({ base, intake, onChange, grade, baseByDis
             if (f) void upload(f);
             e.target.value = '';
           }} />
-        <span className="ml-auto text-xs text-muted">Edits are saved in this browser. Press Enter or leave a cell to recalculate.</span>
+        <span className="ml-auto text-xs text-muted">Press Enter or leave a cell to recalculate. Save the plan to share it.</span>
       </div>
       {message && <p className="mb-2 text-xs text-ink2" role="status">{message}</p>}
 

@@ -1,4 +1,5 @@
-/** Data files produced by scripts/export_dashboard_data.py (served from public/data). */
+/** The dashboard's data, served by the API (backend/app). */
+import { getJson } from './api';
 
 export interface SchoolLevel {
   c: number; // school code
@@ -49,17 +50,13 @@ export interface Dataset {
   meta: Meta;
 }
 
+/** The 2026 dataset from the API (backend/app/domain/dashboard.py current). */
 export async function loadDataset(): Promise<Dataset> {
-  const get = async <T,>(name: string): Promise<T> => {
-    const res = await fetch(`${import.meta.env.BASE_URL}data/${name}`);
-    if (!res.ok) throw new Error(`Could not load ${name} (${res.status})`);
-    return res.json() as Promise<T>;
-  };
   const [schools, grades, meta, combos] = await Promise.all([
-    get<SchoolLevel[]>('school_levels.json'),
-    get<GradeRow[]>('grades.json'),
-    get<Meta>('meta.json'),
-    get<{ names: string[]; rows: [number, number, number, number, number][] }>('combos.json'),
+    getJson<SchoolLevel[]>('/school-levels'),
+    getJson<GradeRow[]>('/grades'),
+    getJson<Meta>('/meta'),
+    getJson<{ names: string[]; rows: [number, number, number, number, number][] }>('/combos'),
   ]);
   return {
     schools,

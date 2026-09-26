@@ -25,13 +25,14 @@ import '@arcgis/core/assets/esri/themes/light/main.css';
 import { fmt, fmtGap, type SchoolLevel } from '../data';
 import { COLORS, GAP_CLASSES, STATUS_COLORS, type Mode } from '../theme';
 import { onBeforePrint, usePrinting } from '../print';
+import { API_URL } from '../api';
 
 // Same setup as BTS ecofleet-web: with Vite, @arcgis/core must fetch its assets from the CDN.
 esriConfig.assetsPath = `https://js.arcgis.com/${arcgisVersion}/@arcgis/core/assets`;
 const ARCGIS_TOKEN = import.meta.env.VITE_ARCGIS_TOKEN as string | undefined;
 if (ARCGIS_TOKEN) esriConfig.apiKey = ARCGIS_TOKEN;
 
-const DATA = `${import.meta.env.BASE_URL}data/`;
+const BOUNDARIES = `${API_URL}/boundaries`; // GeoJSON from the database (PostGIS)
 const RWANDA_CENTER: [number, number] = [29.87, -1.94];
 // Rwanda plus a margin: the view cannot be panned away from it
 const RWANDA_EXTENT = new Extent({ xmin: 28.7, ymin: -3.0, xmax: 31.05, ymax: -0.9, spatialReference: { wkid: 4326 } });
@@ -358,12 +359,12 @@ export default function SchoolMap({ rows, mode, selected, onSelect, district = '
     const style = boundaryStyle(mode, kind);
     const mask = new GraphicsLayer({ title: 'Outside Rwanda', listMode: 'hide' });
     const districts = new GeoJSONLayer({
-      url: `${DATA}districts.geojson`, title: 'Districts', outFields: ['d'],
+      url: `${BOUNDARIES}/districts`, title: 'Districts', outFields: ['d'],
       renderer: outlineRenderer([...style.line, 0.9], 1.5),
       labelingInfo: areaLabels('d', 9, true, DISTRICT_LABEL_SCALES, style),
     });
     const sectors = new GeoJSONLayer({
-      url: `${DATA}sectors.geojson`, title: 'Sectors', outFields: ['d', 's'],
+      url: `${BOUNDARIES}/sectors`, title: 'Sectors', outFields: ['d', 's'],
       minScale: 1200000, // from about zoom 9
       renderer: outlineRenderer([...style.line, 0.45], 0.6),
       labelingInfo: areaLabels('s', 9, false, SECTOR_LABEL_SCALES, style),
@@ -386,7 +387,7 @@ export default function SchoolMap({ rows, mode, selected, onSelect, district = '
     bounds.current = { districts, sectors, mask, focus };
     pendingRef.current = showBasemap(view, basemap, mode, setBasemapName);
 
-    fetch(`${DATA}rwanda.geojson`)
+    fetch(`${BOUNDARIES}/country`)
       .then((res) => res.json() as Promise<GeoJSON.FeatureCollection>)
       .then((fc) => mask.add(new Graphic({
         geometry: maskPolygon(fc.features[0].geometry),

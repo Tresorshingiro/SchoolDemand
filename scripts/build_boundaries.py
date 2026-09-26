@@ -6,9 +6,11 @@ https://www.geoboundaries.org. Sector names are matched to the roster's spelling
 district (sector names repeat across districts), so the map can outline the district / sector picked in the
 dashboard filters.
 
-  dashboard/public/data/rwanda.geojson      country outline (the map masks everything outside it)
-  dashboard/public/data/districts.geojson   30 districts, property d
-  dashboard/public/data/sectors.geojson     416 sectors, properties d (district) and s (sector)
+  data-sources/boundaries/rwanda.geojson      country outline (the map masks everything outside it)
+  data-sources/boundaries/districts.geojson   30 districts, property d
+  data-sources/boundaries/sectors.geojson     416 sectors, properties d (district) and s (sector)
+
+The import job (backend/etl/load_version2.py) loads them into the database; the map reads them from the API.
 
 Run:  python scripts/build_boundaries.py
 """
@@ -21,7 +23,7 @@ import urllib.request
 import analysis as A
 
 API = "https://www.geoboundaries.org/api/current/gbOpen/RWA/{level}/"
-OUT = A.ROOT / "dashboard" / "public" / "data"
+OUT = A.DATA_DIR / "boundaries"
 DIGITS = 5  # ~1 m; keeps the files small
 ALIASES = {"shyrongi": "shyorongi"}  # boundary spelling -> roster spelling (Rulindo)
 
