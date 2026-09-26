@@ -1,0 +1,88 @@
+"""API tests against the loaded development data (Version 2.xlsx)."""
+import pytest
+
+from app.domain import analysis as A
+from app.domain import dashboard as D
+from app.domain import projection as P
+
+
+def test_health(client):
+    body = client.get("/api/health").json()
+    assert body["status"] == "ok" and body["database"] == "ok"
+    assert body["data"]["class_groups"] > 0
+
+
+def test_dataset_shapes(client):
+    meta = client.get("/api/meta").json()
+    assert [lvl["label"] for lvl in meta["levels"]] == A.LEVEL_ORDER
+    levels = client.get("/api/school-levels").json()
+    assert {"c", "n", "d", "s", "l", "st", "g", "ds", "a", "r", "gap", "y", "x"} <= set(levels[0])
+    assert sum(r["st"] for r in levels) == meta["roster"]["students"]
+    assert len(client.get("/api/grades").json()[0]) == len(meta["gradeColumns"])
+
+
+def test_gzip(client):
+    r = client.get("/api/school-levels", headers={"Accept-Encoding": "gzip"})
+    assert r.headers["content-encoding"] == "gzip"
+
+
+@pytest.mark.parametrize("layer, count", [("country", 1), ("districts", 30), ("sectors", 416)])
+def test_boundaries(client, layer, count):
+    fc = client.get(f"/api/boundaries/{layer}").json()
+    assert fc["type"] == "FeatureCollection" and len(fc["features"]) == count
+
+
+def test_default_projection_matches_the_files(client):
+    """The database-backed projection gives exactly what the source files give."""
+    if not A.SOURCE_XLSX.exists():
+        pytest.skip("source files not present")
+    _, s, g, c = P.project(A.load_roster())
+    expected = D.encode_projection(s, g, c)
+    got = client.get("/api/projection/default").json()
+    assert got["schools"] == expected["schools"]
+    assert got["grades"] == expected["grades"]
+    assert got["combos"] == expected["combos"]
+
+
+def test_custom_plan_changes_n1(client):
+    cfg = client.get("/api/projection/config").json()
+    gasabo = cfg["population"]["N1"]["Gasabo"]
+    base = client.get("/api/projection/default").json()
+    run = client.post("/api/projection/run", json={"intake": {"N1": {"Gasabo": [v + 1000 for v in gasabo]}}}).json()
+    n1 = A.GRADE_ORDER.index("N1")
+    total = lambda res, y: sum(r[3] for r in res["grades"] if r[0] == y and r[2] == n1)  # noqa: E731
+    assert total(run, 2027) - total(base, 2027) == pytest.approx(1000, abs=40)  # shared to schools, rounded per school
+
+
+@pytest.mark.parametrize("intake, message", [
+    ({"N1": {"Atlantis": [1, 2, 3, 4]}}, "Unknown district"),
+    ({"N1": {"Gasabo": [1, -2, 3, 4]}}, "whole numbers"),
+    ({"N1": {"Gasabo": [1, 2]}}, "whole numbers"),
+    ({"P1": {"Gasabo": [1, 2, 3, 4]}}, "Unknown entry grade"),
+])
+def test_bad_plans_are_rejected(client, intake, message):
+    r = client.post("/api/projection/run", json={"intake": intake})
+    assert r.status_code == 422 and message in r.json()["detail"]
+
+
+def test_scenario_lifecycle(client):
+    plan = {"N1": {"Gasabo": [111, 222, 333, 444]}}
+    r = client.post("/api/scenarios", json={"name": "pytest scenario", "intake": plan})
+    assert r.status_code == 201, r.text
+    sc = r.json()
+    try:
+        assert len(sc["intake"]["N1"]) == 30  # districts left out take the default plan
+        assert client.post("/api/scenarios", json={"name": "pytest scenario", "intake": plan}).status_code == 409
+        got = client.get(f"/api/scenarios/{sc['id']}").json()
+        assert got["intake"]["N1"]["Gasabo"] == [111, 222, 333, 444]
+        up = client.put(f"/api/scenarios/{sc['id']}", json={"name": "pytest scenario 2", "intake": {"N1": {}}}).json()
+        cfg = client.get("/api/projection/config").json()
+        assert up["name"] == "pytest scenario 2" and up["intake"]["N1"]["Gasabo"] == cfg["population"]["N1"]["Gasabo"]
+        assert any(s["id"] == sc["id"] for s in client.get("/api/scenarios").json())
+    finally:
+        assert client.delete(f"/api/scenarios/{sc['id']}").status_code == 204
+    assert client.get(f"/api/scenarios/{sc['id']}").status_code == 404
+
+
+def test_reload_is_protected(client):
+    assert client.post("/api/admin/reload").status_code in (401, 403)
