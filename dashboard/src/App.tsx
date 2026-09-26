@@ -1,31 +1,16 @@
 import { useEffect, useState } from 'react';
-import { fmt, loadDataset, type Dataset } from './data';
+import { loadDataset, type Dataset } from './data';
 import { useTheme } from './theme';
-import Overview from './components/Overview';
 import ProjectionPage from './components/ProjectionPage';
 
-type Page = 'current' | 'projection';
-const PAGES: { key: Page; label: string; hash: string }[] = [
-  { key: 'current', label: 'Current 2026', hash: '#/' },
-  { key: 'projection', label: 'Projection 2027–30', hash: '#/projection' },
-];
-
-const pageFromHash = (): Page => (window.location.hash.startsWith('#/projection') ? 'projection' : 'current');
-
+/** One page: the projection dashboard (2026 actual and 2027–2030 projected, picked with the Year control). */
 export default function App() {
   const { mode, toggle } = useTheme();
   const [data, setData] = useState<Dataset | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [page, setPage] = useState<Page>(pageFromHash);
 
   useEffect(() => {
     loadDataset().then(setData).catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)));
-  }, []);
-
-  useEffect(() => {
-    const onHash = () => setPage(pageFromHash());
-    window.addEventListener('hashchange', onHash);
-    return () => window.removeEventListener('hashchange', onHash);
   }, []);
 
   if (error) {
@@ -35,29 +20,16 @@ export default function App() {
     return <div className="grid min-h-screen place-items-center text-sm text-muted">Loading data…</div>;
   }
 
-  const { meta } = data;
-
   return (
     <div className="print-frame min-h-screen">
       <header className="border-b border-line bg-surface">
         <div className="mx-auto flex max-w-[1400px] flex-wrap items-center gap-x-6 gap-y-2 px-4 py-3 sm:px-6">
           <div className="min-w-0 flex-1">
-            <h1 className="text-base font-semibold text-ink sm:text-lg">Classroom Sufficiency</h1>
+            <h1 className="text-base font-semibold text-ink sm:text-lg">Classroom Sufficiency 2026–2030</h1>
             <p className="hidden truncate text-xs text-muted sm:block print:block">
-              {page === 'current'
-                ? 'Enough classrooms to seat every student at 45 per room?'
-                : 'Classrooms short as cohorts move up and new children start school'}
+              Classrooms available and needed at every level, as cohorts move up and new children start school
             </p>
           </div>
-          <nav className="flex gap-5 print:hidden" aria-label="Pages">
-            {PAGES.map((p) => (
-              <a key={p.key} href={p.hash} aria-current={page === p.key ? 'page' : undefined}
-                className={`border-b-2 py-1 text-sm ${page === p.key
-                  ? 'border-accent font-medium text-ink' : 'border-transparent text-ink2 hover:text-ink'}`}>
-                {p.label}
-              </a>
-            ))}
-          </nav>
           <button type="button" onClick={toggle} title={mode === 'dark' ? 'Light theme' : 'Dark theme'}
             className="grid h-8 w-8 place-items-center rounded-md border border-line text-ink2 hover:text-ink print:hidden"
             aria-label={`Switch to ${mode === 'dark' ? 'light' : 'dark'} theme`}>
@@ -71,42 +43,7 @@ export default function App() {
         </div>
       </header>
 
-      {page === 'projection' ? (
-        <ProjectionPage current={data} mode={mode} />
-      ) : (
-        <Overview
-          key="current"
-          data={data}
-          mode={mode}
-          showLevels
-          notes={{
-            available: 'distinct physical rooms',
-            gradeChart: 'Rooms are counted within each grade, so a room shared by two grades appears in both.',
-          }}
-          footer={(capacity) => (
-            <>
-              <p>
-                <b className="text-ink2">Definitions.</b> Class groups = Total Classrooms (one roster row each). Double-shift sessions =
-                class groups sharing a room with another group. Rooms available = distinct physical rooms. Rooms required =
-                students ÷ {capacity}, rounded up. Gap = available − required (negative = deficit). Classrooms short adds up
-                the deficits of schools in deficit only, since spare rooms cannot seat pupils from another school.
-              </p>
-              <p>
-                <b className="text-ink2">Secondary, TVET and TTC</b> study full day, so there is no double shift: every class group
-                needs its own room and different combinations never share. Rooms required = for each grade and combination, the
-                larger of its class groups and its students ÷ {capacity} (rounded up), added up. A class group that shares a room
-                ID with another group in the roster has no room of its own; it is counted under "class groups without a room"
-                and in the gap.
-              </p>
-              <p>
-                Source: {meta.source} ({fmt(meta.roster.rows)} class groups, {fmt(meta.roster.schools)} schools). Built {meta.built}.
-                {' '}{fmt(meta.unmapped)} schools have missing or out-of-country coordinates and are listed in the table but not on the map.
-                Full figures and the data-quality list are in School_Classroom_Analysis_2026.xlsx.
-              </p>
-            </>
-          )}
-        />
-      )}
+      <ProjectionPage current={data} mode={mode} />
     </div>
   );
 }

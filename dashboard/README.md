@@ -28,12 +28,27 @@ Viewers need internet access to `js.arcgis.com` and `services.arcgisonline.com` 
 - Optional: set `VITE_ARCGIS_TOKEN` in `.env` to use an Esri API key.
 - Schools are drawn from the JSON as a `GeoJSONLayer` built in the browser (the BTS `featureLayers.ts` pattern).
   Schools with missing or out-of-Rwanda coordinates are left off the map but stay in the table.
+- **Satellite imagery is the default**; everything outside Rwanda is shaded and the view cannot pan away from Rwanda.
+- **Clusters / Schools** switch: clusters group nearby schools (colour = average gap, label = number of schools; hover for
+  students, schools in deficit and classrooms short; click to zoom in). From about 1:150,000 every school shows alone,
+  sized by students; from about 1:40,000 (zoom 14) a close-up layer draws every school the same large size in its gap
+  colour, with names from zoom 15 (GIS team's advice). Esri place names appear from about zoom 13.
+- **District and sector boundaries** (switchable; sector lines from about zoom 9, names when zoomed in). The district /
+  sector picked in the page filters is outlined in amber.
+- **Legend panel on the map** (bottom left, collapsible) is also the map's filter: click Deficit / Exact fit / Surplus
+  or a class (10+ short … 10+ spare) to hide or show those schools; it holds the Clusters / Schools switch and the
+  District / Sector boundary checkboxes. **Find a school** (top left) searches the schools in view.
+- District names show from about zoom 9 (at national zoom the clusters and district outlines carry the view).
+- Boundaries: `public/data/districts.geojson`, `sectors.geojson`, `rwanda.geojson`, built by
+  `python scripts/build_boundaries.py` from geoBoundaries (Open Data Rwanda 2012, CC BY 4.0), names matched to the roster.
 
-## Pages
+## Page
 
-- **Current 2026** (`#/`) — every level, from the 2026 roster.
-- **Projection 2027–2030** (`#/projection`) — a planning tool for every level. Each grade moves up one step a year and
-  rooms stay at the 2026 count for each level. New students:
+One page (`src/App.tsx` -> `ProjectionPage`): 2026 actual and 2027–2030 projected, picked with the **Year** control
+(the separate "Current 2026" page was removed on 2026-09-26; its 2026 figures are the Year = 2026 view). Every level;
+each grade moves up one step a year and rooms stay at the 2026 count for each level. Besides the district charts, the
+**Largest 50 schools by students and grade** chart ranks the schools in scope; click a bar for the school's details.
+New students:
   - **N1** = children aged 3 living in each pre-primary school's catchment area (`Chachement area.xlsx`, NISR population
     shared to schools by GIS; 2030 repeats 2029 in that file). The **intake plan** table (district × year) defaults to
     the district totals; editing a district scales its schools in proportion to their catchment. Editable cell by cell,
@@ -51,7 +66,7 @@ Viewers need internet access to `js.arcgis.com` and `services.arcgisonline.com` 
 
 ## PDF report
 
-**Download PDF** (filter bar, both pages) prints the current view — level, area, year and intake plan — as an
+**Generate report** (filter bar, both pages) prints the current view — level, area, year and intake plan — as an
 A4-landscape report: light theme, a heading with the scope and print date, every chart at full length, the map as a
 snapshot and the first 25 schools of the table in its current sort. It opens the browser's print dialog; choose
 **Save as PDF**. How it works: `src/print.ts` (the `.print-*` classes in `src/index.css` fix the report layout).

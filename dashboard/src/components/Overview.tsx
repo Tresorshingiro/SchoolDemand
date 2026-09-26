@@ -13,6 +13,7 @@ import {
 } from './Charts';
 
 export const PRIMARY = 1;
+const TOP_SCHOOLS = 50; // schools in the largest-schools chart
 
 export function Card({ title, sub, children, className = '', aside }: {
   title: string; sub?: string; children: ReactNode; className?: string; aside?: ReactNode;
@@ -163,6 +164,21 @@ export default function Overview({
     () => gradesByArea(data.grades, data.meta, filters.level, areaRows, areaKey),
     [data, filters.level, areaRows, areaKey],
   );
+  // The largest schools in scope, by students per grade (school code as key; names can repeat)
+  const topSchools = useMemo(() => {
+    const total = (a: { students: number[] }) => a.students.reduce((x, v) => x + v, 0);
+    return gradesByArea(data.grades, data.meta, filters.level, rows, (r) => String(r.c))
+      .sort((a, b) => total(b) - total(a))
+      .slice(0, TOP_SCHOOLS);
+  }, [data, filters.level, rows]);
+  const schoolLabel = useMemo(() => {
+    const byCode = new Map(rows.map((r) => [String(r.c), r]));
+    return (code: string) => {
+      const r = byCode.get(code);
+      return r ? { name: r.n, sub: `${r.d} · ${r.s} · gap ${fmtGap(r.gap)}` } : { name: code };
+    };
+  }, [rows]);
+  const pickSchool = useCallback((code: string) => setSelected(Number(code)), []);
   // Available vs required: provinces for the whole country, sectors inside a district.
   const compare = useMemo(() => {
     const groups = filters.district ? byArea : [...totalsBy(levelRows, (r) => provinceOf(r.d))];
@@ -242,13 +258,13 @@ export default function Overview({
           <div className="ml-auto flex flex-wrap items-center gap-2">
             {controls}
             <button type="button" onClick={() => void printReport(reportFile)}
-              title="Opens the print dialog: choose Save as PDF"
+              title="Opens the print dialog: choose Save as PDF to download the report"
               className="inline-flex h-8 items-center gap-1.5 rounded-md border border-line bg-surface px-3 text-sm text-ink2 hover:text-ink">
               <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.75"
                 strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                 <path d="M12 3v12M7 10l5 5 5-5M5 21h14" />
               </svg>
-              Download PDF
+              Generate report
             </button>
           </div>
         </div>
@@ -284,6 +300,14 @@ export default function Overview({
             </div>
           </Card>
         </div>
+        <Card title={`Largest ${topSchools.length === TOP_SCHOOLS ? TOP_SCHOOLS : topSchools.length} schools by students and grade`}
+          sub={`${level.label} · ${scope}. Largest first. Click a bar for the school's details.`}
+          aside={<GradeLegend grades={level.grades} mode={mode} />}>
+          <div className="print-expand max-h-[440px] overflow-y-auto px-2 pb-2">
+            <StackedGradesByArea data={topSchools} grades={level.grades} measure="students" mode={mode} areaLabel="school"
+              labelOf={schoolLabel} onPick={pickSchool} pickText="Click for the school's details" />
+          </div>
+        </Card>
 
         {/* ---------------------------------------------------------------- where classrooms are short */}
         <SectionTitle title="Where classrooms are short"
@@ -292,9 +316,10 @@ export default function Overview({
         {shortageTop?.(codes, filters)}
 
         <div className="print-cols-3 grid gap-4 lg:grid-cols-3">
-          <Card title="Schools on the map" sub="Click a school for its details. Colour shows the classroom gap." className="print-span-2 print-map flex min-h-[600px] flex-col lg:col-span-2">
+          <Card title="Schools on the map" sub="Colour shows the classroom gap. Use the legend on the map to filter; click a cluster to zoom in, a school for its details." className="print-span-2 print-map flex min-h-[600px] flex-col lg:col-span-2">
             <div className="flex-1">
-              <SchoolMap rows={rows} mode={mode} selected={selected} onSelect={setSelected} />
+              <SchoolMap rows={rows} mode={mode} selected={selected} onSelect={setSelected}
+                district={filters.district} sector={filters.sector} />
             </div>
           </Card>
           <div className="flex flex-col gap-4">

@@ -1,1 +1,22 @@
-.cache/
+# Python
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+
+# Node / build
+node_modules/
+dist/
+*.tsbuildinfo
+
+# Generated outputs and caches
+output/
+*.pkl
+
+# Local settings
+.env
+!.env.example
+
+# Office lock files and backups
+~$*
+Version 2 - backup*.xlsx

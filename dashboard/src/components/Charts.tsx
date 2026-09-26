@@ -176,13 +176,16 @@ export function GradeLegend({ grades, mode }: { grades: string[]; mode: Mode }) 
 
 /* ------------------------------------------------------------------ students / class groups by area, stacked by grade */
 
-export function StackedGradesByArea({ data, grades, measure, mode, areaLabel, onPick }: {
+export function StackedGradesByArea({ data, grades, measure, mode, areaLabel, onPick, labelOf, pickText = 'Click to filter' }: {
   data: AreaGrades[];
   grades: string[];
   measure: 'students' | 'classGroups';
   mode: Mode;
   areaLabel: string;
   onPick?: (name: string) => void;
+  /** Display name and a second tooltip line for an area key (e.g. a school code -> name, district · sector). */
+  labelOf?: (area: string) => { name: string; sub?: string };
+  pickText?: string;
 }) {
   const noun = measure === 'students' ? 'students' : 'class groups';
   const option = useMemo(() => {
@@ -197,17 +200,22 @@ export function StackedGradesByArea({ data, grades, measure, mode, areaLabel, on
         ...tooltipBase(mode),
         formatter: (ps: { dataIndex: number }[]) => {
           const a = sorted[ps[0].dataIndex];
-          return `<div style="font-weight:600;margin-bottom:4px">${a.area}</div>` +
+          const l = labelOf?.(a.area);
+          return `<div style="font-weight:600">${l?.name ?? a.area}</div>` +
+            (l?.sub ? `<div style="color:${c.ink2};margin-bottom:4px">${l.sub}</div>` : '<div style="margin-bottom:4px"></div>') +
             [...grades.keys()].reverse().map((k) => row(colors[k], grades[k], fmt(a[measure][k]))).join('') +
             `<div style="border-top:1px solid ${c.grid};margin:4px 0"></div>` +
             row('transparent', `Total ${noun}`, fmt(total(a))) +
-            (onPick ? `<div style="color:${c.muted};margin-top:2px">Click to filter</div>` : '');
+            (onPick ? `<div style="color:${c.muted};margin-top:2px">${pickText}</div>` : '');
         },
       },
       xAxis: { type: 'value', ...axisStyle(mode), axisLine: { show: false } },
       yAxis: {
         type: 'category', data: sorted.map((a) => a.area), ...axisStyle(mode),
-        axisLabel: { ...axisStyle(mode).axisLabel, color: c.ink2 },
+        axisLabel: {
+          ...axisStyle(mode).axisLabel, color: c.ink2,
+          ...(labelOf ? { formatter: (v: string) => labelOf(v).name, width: 190, overflow: 'truncate' } : {}),
+        },
       },
       series: [
         ...grades.map((g, k) => ({
@@ -224,7 +232,7 @@ export function StackedGradesByArea({ data, grades, measure, mode, areaLabel, on
         },
       ],
     };
-  }, [data, grades, measure, mode, onPick, noun]);
+  }, [data, grades, measure, mode, onPick, noun, labelOf, pickText]);
   const height = Math.max(160, data.length * 24 + 24);
   return <EChart option={option} height={height} onClick={onPick} label={`${noun} by ${areaLabel} and grade`} />;
 }
