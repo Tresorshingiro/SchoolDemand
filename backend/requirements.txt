@@ -1,0 +1,10 @@
+fastapi>=0.115
+uvicorn[standard]>=0.30
+sqlalchemy>=2.0
+psycopg[binary]>=3.2
+alembic>=1.13
+geoalchemy2>=0.15
+pydantic-settings>=2.4
+pandas>=2.2
+numpy>=1.26
+openpyxl>=3.1
