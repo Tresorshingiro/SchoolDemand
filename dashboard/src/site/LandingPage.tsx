@@ -5,8 +5,9 @@ import { useAuth } from '../auth';
 import { landingDemo, portal } from './content';
 import { SiteFooter, SiteNav, scrollToSection } from './SiteChrome';
 import {
-  CapacityIllustration, DEMAND_COLORS, DemandIllustration, FutureIllustration, PopulationIllustration,
+  CapacityIllustration, DemandIllustration, FutureIllustration, PopulationIllustration, demandColors,
 } from './Illustrations';
+import { useTheme } from '../theme';
 
 const PLANNING_ICONS: Record<string, LucideIcon> = { 'map-pin': MapPin, target: Target, map: Map, activity: Activity };
 
@@ -35,6 +36,7 @@ function ConceptList({ items }: { items: readonly { title: string; text: string 
 
 export default function LandingPage() {
   const { user } = useAuth();
+  const { mode } = useTheme();
   const { hash } = useLocation();
   const [year, setYear] = useState(landingDemo.projectionYears[0]);
 
@@ -172,7 +174,7 @@ export default function LandingPage() {
                 <DemandIllustration />
                 <div className="lp-demand-legend">
                   {landingDemo.demandLevels.map((level, i) => (
-                    <span key={level}><i style={{ background: DEMAND_COLORS[i] }} aria-hidden="true" />{level}</span>
+                    <span key={level}><i style={{ background: demandColors(mode)[i] }} aria-hidden="true" />{level}</span>
                   ))}
                 </div>
               </div>
@@ -209,9 +211,9 @@ export default function LandingPage() {
               </div>
               <FutureIllustration years={landingDemo.projectionYears} year={year} />
               <div className="lp-projection-key">
-                <span><i style={{ background: '#94a3b8' }} aria-hidden="true" />Current capacity</span>
-                <span><i style={{ background: '#059669' }} aria-hidden="true" />Projected demand</span>
-                <span><i style={{ background: 'rgba(248, 113, 113, 0.45)' }} aria-hidden="true" />Shortage</span>
+                <span><i style={{ background: 'var(--available)' }} aria-hidden="true" />Current capacity</span>
+                <span><i style={{ background: 'var(--required)' }} aria-hidden="true" />Projected demand</span>
+                <span><i style={{ background: 'var(--deficit)', opacity: 0.35 }} aria-hidden="true" />Shortage</span>
               </div>
             </div>
             <figure className="lp-image-moment lp-image-moment--side">

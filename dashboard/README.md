@@ -23,9 +23,11 @@ account to sign in with: `python -m app.users create you@example.org` in `backen
 | `/legal/{privacy,terms,disclaimer,accessibility}` | `src/site/LegalPage.tsx` | public |
 | `/dashboard` | The dashboard (`src/App.tsx`) | signed-in users only, loaded after sign-in |
 
-The landing, sign-in and legal pages come from the School Demand & Demographics site designed by the team (their
-styles in `src/site/site.css`, scoped under `.site` so they never touch the dashboard; always light). The landing
-page's maps and chart are illustrations (`src/site/Illustrations.tsx`, tagged "Illustration"): Rwanda's real district
+The landing, sign-in and legal pages keep the layout of the School Demand & Demographics site designed by the team
+(`src/site/site.css`, scoped under `.site`) in the dashboard's theme: same colour tokens as `src/index.css`, same
+system font, same light / dark mode, and the same theme switch (`ThemeProvider` / `ThemeToggle` in `src/theme.tsx`,
+shared by every page). The landing
+page's maps and chart are illustrations (`src/site/Illustrations.tsx`): Rwanda's real district
 outlines (`src/site/rwandaMap.ts`, built by `python scripts/build_landing_map.py`) with decorative shading and no
 figures, since the data is only for signed-in users. Routing:
 `react-router-dom` in `src/main.tsx`. Sign-in state: `src/auth.tsx` — the API sets an HttpOnly session cookie, the page

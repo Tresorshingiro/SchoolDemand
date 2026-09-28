@@ -1,6 +1,7 @@
 import { useState, type FormEvent } from 'react';
 import { Link, Navigate, useNavigate, useSearchParams } from 'react-router-dom';
 import { safeNext, useAuth } from '../auth';
+import { ThemeToggle } from '../theme';
 import { LogoMark } from './SiteChrome';
 
 export default function LoginPage() {
@@ -38,6 +39,7 @@ export default function LoginPage() {
 
   return (
     <div className="auth-page">
+      <ThemeToggle className="lp-theme-btn auth-theme-btn" />
       <form className="login-card" onSubmit={onSubmit} noValidate>
         <LogoMark size={56} />
         <h2>School Demand &amp; Demographics</h2>

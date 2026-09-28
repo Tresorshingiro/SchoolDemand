@@ -3,6 +3,7 @@ import { useEffect, useState, type MouseEvent } from 'react';
 import { Link } from 'react-router-dom';
 import { Menu, X } from 'lucide-react';
 import { useAuth } from '../auth';
+import { ThemeToggle } from '../theme';
 import { SECTIONS, portal } from './content';
 import appIcon from './assets/app-icon.png';
 
@@ -70,6 +71,7 @@ export function SiteNav({ onLanding = false }: { onLanding?: boolean }) {
         </nav>
 
         <div className="lp-nav-actions">
+          <ThemeToggle className="lp-theme-btn" />
           <AccountLink className="lp-nav-signin" />
           <button type="button" className="lp-menu-btn" aria-label={menuOpen ? 'Close menu' : 'Open menu'}
             aria-expanded={menuOpen} onClick={() => setMenuOpen((v) => !v)}>

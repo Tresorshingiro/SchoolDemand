@@ -14,6 +14,8 @@
   --accent-soft: rgba(42, 120, 214, 0.1);
   --deficit: #e34948;
   --deficit-soft: rgba(227, 73, 72, 0.1);
+  --available: #2a78d6; /* rooms available / required, as COLORS in theme.tsx (the landing page uses them) */
+  --required: #eb6834;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -29,6 +31,8 @@
     --accent-soft: rgba(57, 135, 229, 0.16);
     --deficit: #e66767;
     --deficit-soft: rgba(230, 103, 103, 0.16);
+    --available: #3987e5;
+    --required: #d95926;
   }
 }
 
@@ -44,6 +48,8 @@
   --accent-soft: rgba(57, 135, 229, 0.16);
   --deficit: #e66767;
   --deficit-soft: rgba(230, 103, 103, 0.16);
+  --available: #3987e5;
+  --required: #d95926;
 }
 
 html,

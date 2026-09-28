@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { usePrinting } from './print';
 
 export type Mode = 'light' | 'dark';
@@ -95,11 +95,18 @@ function storedMode(): Mode | null {
   }
 }
 
+interface ThemeState {
+  mode: Mode;
+  toggle: () => void;
+}
+
+const ThemeContext = createContext<ThemeState | null>(null);
+
 /**
- * Theme follows the OS unless the viewer picks one; the choice is stamped on <html data-theme>.
- * A printed report is always light.
+ * Theme follows the OS unless the viewer picks one; the choice is stamped on <html data-theme> and shared by every
+ * page (landing, sign-in, dashboard). A printed report is always light.
  */
-export function useTheme(): { mode: Mode; toggle: () => void } {
+export function ThemeProvider({ children }: { children: ReactNode }) {
   const [chosen, setMode] = useState<Mode>(() => storedMode() ?? systemMode());
   const printing = usePrinting();
   const mode: Mode = printing ? 'light' : chosen;
@@ -130,5 +137,28 @@ export function useTheme(): { mode: Mode; toggle: () => void } {
     });
   }, []);
 
-  return { mode, toggle };
+  const value = useMemo(() => ({ mode, toggle }), [mode, toggle]);
+  return <ThemeContext.Provider value={value}>{children}</ThemeContext.Provider>;
+}
+
+export function useTheme(): ThemeState {
+  const ctx = useContext(ThemeContext);
+  if (!ctx) throw new Error('useTheme outside ThemeProvider');
+  return ctx;
+}
+
+/** Light / dark switch (a sun or a moon), used in the dashboard and the landing page headers. */
+export function ThemeToggle({ className = '' }: { className?: string }) {
+  const { mode, toggle } = useTheme();
+  return (
+    <button type="button" onClick={toggle} title={mode === 'dark' ? 'Light theme' : 'Dark theme'}
+      aria-label={`Switch to ${mode === 'dark' ? 'light' : 'dark'} theme`} className={className}>
+      <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.75"
+        strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+        {mode === 'dark'
+          ? <path d="M12 17a5 5 0 1 0 0-10 5 5 0 0 0 0 10M12 1v2M12 21v2M4.2 4.2l1.4 1.4M18.4 18.4l1.4 1.4M1 12h2M21 12h2M4.2 19.8l1.4-1.4M18.4 5.6l1.4-1.4" />
+          : <path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8" />}
+      </svg>
+    </button>
+  );
 }

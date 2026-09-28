@@ -1,23 +1,22 @@
 /*
- * Public pages (landing, sign-in, legal) — the design from the School Demand & Demographics site.
- * Everything is scoped under .site so it does not touch the dashboard (Tailwind, light / dark theme);
- * these pages are always light.
+ * Public pages (landing, sign-in, legal) — the layout from the School Demand & Demographics site, in the dashboard's
+ * theme: the colours are the tokens of index.css (page, surface, ink, muted, line, accent), so these pages follow the
+ * same light / dark mode and the same blue accent as the dashboard. Scoped under .site.
  */
 .site {
-  --text: #0f172a;
-  --text-2: #334155;
-  --text-3: #475569;
-  --caption: #64748b;
-  --dim: #94a3b8;
+  --text: var(--ink);
+  --text-2: var(--ink-2);
+  --text-3: var(--ink-2);
+  --caption: var(--muted);
+  --dim: var(--muted);
   --header: 64px;
-  --line: rgba(15, 23, 42, 0.1);
-  color-scheme: light;
+  --accent-line: color-mix(in srgb, var(--accent) 35%, transparent); /* borders of accent-tinted boxes */
+  --hero-shade: 24, 79, 149; /* #184f95, the dark end of the dashboard's blue ramp, as r, g, b */
   min-height: 100dvh;
   display: flex;
   flex-direction: column;
   color: var(--text-2);
-  background: #ffffff;
-  font-family: Inter, system-ui, sans-serif;
+  background: var(--page);
   font-size: 16px;
   line-height: 1.55;
   font-weight: 400;
@@ -28,8 +27,8 @@
 .site h2,
 .site h3,
 .site strong {
-  font-weight: 700;
-  letter-spacing: -0.03em;
+  font-weight: 600; /* as the dashboard's headings */
+  letter-spacing: -0.01em;
   color: var(--text);
 }
 
@@ -38,7 +37,7 @@
 .site input:focus-visible,
 .site button:focus-visible,
 .site a:focus-visible {
-  outline: 2px solid #047857;
+  outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
 
@@ -59,14 +58,14 @@
 .lp-nav-link {
   font-size: 13px;
   font-weight: 600;
-  color: #334155;
+  color: var(--ink-2);
   background: transparent;
   border: 0;
   padding: 0;
   cursor: pointer;
 }
 
-.lp-nav-link:hover { color: #047857; }
+.lp-nav-link:hover { color: var(--accent); }
 
 /* —— Legal pages —— */
 .legal-page {
@@ -106,9 +105,9 @@
   margin: auto;
   padding: 28px 24px;
   border-radius: 12px;
-  border: 1px solid rgba(15, 23, 42, 0.1);
-  background: #ffffff;
-  box-shadow: 0 12px 40px rgba(15, 23, 42, 0.08);
+  border: 1px solid var(--line);
+  background: var(--surface);
+  box-shadow: 0 12px 40px var(--line);
   text-align: center;
   display: flex;
   flex-direction: column;
@@ -120,7 +119,7 @@
   margin: 0;
   font-size: clamp(1.35rem, 2.4vw, 1.85rem);
   line-height: 1.2;
-  color: #0f172a;
+  color: var(--ink);
 }
 
 .login-card label {
@@ -136,8 +135,8 @@
 .login-card input {
   width: 100%;
   min-height: 48px;
-  border: 2px solid rgba(15, 23, 42, 0.12);
-  background: #ffffff;
+  border: 2px solid var(--line);
+  background: var(--surface);
   border-radius: 10px;
   padding: 12px 14px;
   font-size: 16px;
@@ -151,8 +150,8 @@
 }
 
 .login-card input:focus {
-  border-color: #0f172a;
-  box-shadow: 0 0 0 3px rgba(15, 23, 42, 0.08);
+  border-color: var(--ink);
+  box-shadow: 0 0 0 3px var(--line);
 }
 
 .btn {
@@ -161,7 +160,7 @@
   justify-content: center;
   gap: 8px;
   border: 0;
-  border-radius: 980px;
+  border-radius: 8px; /* the dashboard's buttons */
   padding: 12px 18px;
   font-size: 15px;
   font-weight: 600;
@@ -169,28 +168,28 @@
 }
 
 .btn-cosmic {
-  background: #059669;
+  background: var(--accent);
   color: #ffffff;
-  box-shadow: 0 8px 20px rgba(5, 150, 105, 0.28);
+  box-shadow: 0 8px 20px color-mix(in srgb, var(--accent) 28%, transparent);
   transition: transform 0.2s ease, box-shadow 0.2s ease, background 0.2s ease;
 }
 
 .btn-cosmic:hover:not(:disabled) {
   transform: translateY(-2px);
-  background: #047857;
-  box-shadow: 0 10px 24px rgba(5, 150, 105, 0.34);
+  background: var(--accent);
+  box-shadow: 0 10px 24px color-mix(in srgb, var(--accent) 34%, transparent);
 }
 
 .btn-ghost {
-  background: #ffffff;
-  color: #047857;
-  border: 1px solid #a7f3d0;
+  background: var(--surface);
+  color: var(--accent);
+  border: 1px solid var(--accent-line);
   box-shadow: none;
 }
 
 .btn-ghost:hover {
-  background: #ecfdf5;
-  border-color: #6ee7b7;
+  background: var(--accent-soft);
+  border-color: var(--accent-line);
 }
 
 .btn:disabled {
@@ -204,7 +203,7 @@
 /* —— Landing page —— */
 .lp {
   min-height: 100dvh;
-  background: #ffffff;
+  background: var(--surface);
   color: var(--text-2);
 }
 
@@ -212,7 +211,7 @@
   position: sticky;
   top: 0;
   z-index: 50;
-  background: rgba(255, 255, 255, 0.92);
+  background: color-mix(in srgb, var(--surface) 92%, transparent);
   border-bottom: 1px solid transparent;
   backdrop-filter: blur(10px);
   transition: background-color 160ms ease, border-color 160ms ease, box-shadow 160ms ease;
@@ -241,7 +240,7 @@
   font-size: 12.5px;
   font-weight: 800;
   letter-spacing: -0.02em;
-  color: #047857;
+  color: var(--accent);
 }
 
 .lp-brand span {
@@ -259,11 +258,11 @@
 .lp-nav-links a {
   font-size: 13px;
   font-weight: 600;
-  color: #334155;
+  color: var(--ink-2);
 }
 
 .lp-nav-links a:hover {
-  color: #047857;
+  color: var(--accent);
 }
 
 .lp-nav-actions {
@@ -278,15 +277,15 @@
   justify-content: center;
   height: 36px;
   padding: 0 16px;
-  border-radius: 980px;
-  background: #059669;
+  border-radius: 8px;
+  background: var(--accent);
   color: #ffffff;
   font-size: 13px;
   font-weight: 600;
 }
 
 .lp-nav-signin:hover {
-  background: #047857;
+  background: var(--accent);
 }
 
 .lp-menu-btn {
@@ -294,9 +293,9 @@
   width: 36px;
   height: 36px;
   border-radius: 10px;
-  border: 1px solid #a7f3d0;
-  background: #ffffff;
-  color: #047857;
+  border: 1px solid var(--accent-line);
+  background: var(--surface);
+  color: var(--accent);
   place-items: center;
   cursor: pointer;
 }
@@ -307,7 +306,7 @@
   gap: 4px;
   padding: 8px 16px 16px;
   border-top: 1px solid var(--line);
-  background: #ffffff;
+  background: var(--surface);
 }
 
 .lp-nav-drawer a {
@@ -315,12 +314,12 @@
   border-radius: 10px;
   font-size: 13px;
   font-weight: 600;
-  color: #334155;
+  color: var(--ink-2);
 }
 
 .lp-nav-drawer a:hover {
-  background: #ecfdf5;
-  color: #047857;
+  background: var(--accent-soft);
+  color: var(--accent);
 }
 
 .lp-hero {
@@ -347,7 +346,7 @@
   font-weight: 600;
   letter-spacing: 0.14em;
   text-transform: uppercase;
-  color: #047857;
+  color: var(--accent);
 }
 
 .lp-lead {
@@ -369,7 +368,7 @@
   max-width: 36em;
   text-align: center;
   font-size: 13px;
-  color: #64748b;
+  color: var(--muted);
 }
 
 .lp-hero-actions {
@@ -384,8 +383,8 @@
   min-height: 420px;
   border-radius: 12px;
   overflow: hidden;
-  border: 1px solid rgba(15, 23, 42, 0.1);
-  box-shadow: 0 12px 40px rgba(15, 23, 42, 0.08);
+  border: 1px solid var(--line);
+  box-shadow: 0 12px 40px var(--line);
 }
 
 .lp-hero-visual > img {
@@ -401,9 +400,9 @@
   inset: 0;
   background: linear-gradient(
     160deg,
-    rgba(4, 120, 87, 0.18),
-    rgba(4, 120, 87, 0.55) 55%,
-    rgba(6, 95, 70, 0.78)
+    rgba(var(--hero-shade), 0.15),
+    rgba(var(--hero-shade), 0.5) 55%,
+    rgba(var(--hero-shade), 0.78)
   );
 }
 
@@ -430,7 +429,7 @@
   width: 10px;
   height: 10px;
   border-radius: 999px;
-  background: #ffffff;
+  background: #ffffff; /* on the photo, in either theme */
   box-shadow: 0 0 0 6px rgba(255, 255, 255, 0.2);
 }
 
@@ -455,22 +454,22 @@
 .lp-hero-indicators li {
   padding: 10px 12px;
   border-radius: 10px;
-  background: rgba(255, 255, 255, 0.94);
-  border: 1px solid rgba(15, 23, 42, 0.08);
+  background: color-mix(in srgb, var(--surface) 92%, transparent);
+  border: 1px solid var(--line);
 }
 
 .lp-indicator-value {
   display: block;
   font-size: 12px;
   font-weight: 700;
-  color: #047857;
+  color: var(--accent);
 }
 
 .lp-indicator-label {
   display: block;
   margin-top: 2px;
   font-size: 11px;
-  color: #64748b;
+  color: var(--muted);
 }
 
 .lp-section {
@@ -501,9 +500,9 @@
 .lp-viz-card,
 .lp-panel,
 .lp-plan-card {
-  border: 1px solid rgba(15, 23, 42, 0.1);
+  border: 1px solid var(--line);
   border-radius: 12px;
-  background: #ffffff;
+  background: var(--surface);
   box-shadow: 0 12px 40px rgba(15, 23, 42, 0.04);
 }
 
@@ -520,7 +519,7 @@
   font-weight: 600;
   letter-spacing: 0.12em;
   text-transform: uppercase;
-  color: #64748b;
+  color: var(--muted);
 }
 
 .lp-geo-panel {
@@ -528,10 +527,7 @@
   min-height: 280px;
   border-radius: 10px;
   overflow: hidden;
-  background:
-    radial-gradient(circle at 30% 35%, rgba(52, 211, 153, 0.35), transparent 42%),
-    radial-gradient(circle at 68% 58%, rgba(4, 120, 87, 0.28), transparent 38%),
-    linear-gradient(160deg, #ecfdf5, #d1fae5 55%, #a7f3d0);
+  background: var(--page);
   display: grid;
   place-items: end start;
   padding: 16px;
@@ -542,26 +538,17 @@
   max-width: 18em;
   font-size: 13px;
   font-weight: 600;
-  color: #065f46;
+  color: var(--accent);
 }
 
 .lp-geo-wash {
   position: absolute;
   inset: 0;
-  opacity: 0.25;
+  opacity: 0.6;
   background-image:
-    linear-gradient(rgba(4, 120, 87, 0.25) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(4, 120, 87, 0.25) 1px, transparent 1px);
+    linear-gradient(var(--line) 1px, transparent 1px),
+    linear-gradient(90deg, var(--line) 1px, transparent 1px);
   background-size: 24px 24px;
-}
-
-.lp-geo-panel--demand {
-  background:
-    radial-gradient(circle at 25% 30%, rgba(220, 252, 231, 0.9), transparent 30%),
-    radial-gradient(circle at 55% 45%, rgba(74, 222, 128, 0.55), transparent 28%),
-    radial-gradient(circle at 72% 62%, rgba(234, 179, 8, 0.45), transparent 26%),
-    radial-gradient(circle at 40% 70%, rgba(239, 68, 68, 0.35), transparent 24%),
-    linear-gradient(160deg, #ecfdf5, #d1fae5);
 }
 
 .lp-demand-legend {
@@ -575,24 +562,24 @@
 .lp-demand-legend span {
   padding: 4px 8px;
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.9);
+  background: color-mix(in srgb, var(--surface) 92%, transparent);
   font-size: 11px;
   font-weight: 600;
-  color: #065f46;
+  color: var(--accent);
 }
 
 .lp-flow-line {
   margin: 0;
   font-size: 12px;
   font-weight: 600;
-  color: #047857;
+  color: var(--accent);
 }
 
 .lp-demo-note,
 .lp-caption {
   margin: 0;
   font-size: 11px;
-  color: #64748b;
+  color: var(--muted);
 }
 
 .lp-panel {
@@ -623,7 +610,7 @@
   justify-content: space-between;
   gap: 12px;
   padding-bottom: 8px;
-  border-bottom: 1px solid rgba(15, 23, 42, 0.08);
+  border-bottom: 1px solid var(--line);
   font-size: 13px;
 }
 
@@ -633,11 +620,11 @@
 }
 
 .lp-metric-list span {
-  color: #64748b;
+  color: var(--muted);
 }
 
 .lp-metric-list strong {
-  color: #0f172a;
+  color: var(--ink);
   font-weight: 700;
 }
 
@@ -655,7 +642,7 @@
   flex-direction: column;
   gap: 4px;
   padding-bottom: 10px;
-  border-bottom: 1px solid rgba(15, 23, 42, 0.08);
+  border-bottom: 1px solid var(--line);
 }
 
 .lp-concept-list li:last-child {
@@ -666,12 +653,12 @@
 .lp-concept-list strong {
   font-size: 13px;
   font-weight: 700;
-  color: #0f172a;
+  color: var(--ink);
 }
 
 .lp-concept-list span {
   font-size: 13px;
-  color: #64748b;
+  color: var(--muted);
   line-height: 1.45;
 }
 
@@ -686,7 +673,7 @@
 .lp-mini-chart span {
   flex: 1;
   border-radius: 6px 6px 2px 2px;
-  background: linear-gradient(180deg, #34d399, #047857);
+  background: var(--accent);
   opacity: 0.85;
 }
 
@@ -697,7 +684,7 @@
   gap: 0;
   border-radius: 12px;
   overflow: hidden;
-  border: 1px solid rgba(15, 23, 42, 0.1);
+  border: 1px solid var(--line);
 }
 
 .lp-image-moment img {
@@ -713,7 +700,7 @@
   justify-content: center;
   gap: 8px;
   padding: 28px 24px;
-  background: #ecfdf5;
+  background: var(--accent-soft);
 }
 
 .lp-image-moment h3 {
@@ -740,15 +727,15 @@
   align-items: end;
   padding: 16px;
   border-radius: 12px;
-  border: 1px solid rgba(15, 23, 42, 0.1);
-  background: #ffffff;
+  border: 1px solid var(--line);
+  background: var(--surface);
 }
 
 .lp-compare-vs {
   margin: 0 0 8px;
   font-size: 12px;
   font-weight: 700;
-  color: #64748b;
+  color: var(--muted);
 }
 
 .lp-compare-bar {
@@ -757,14 +744,15 @@
   margin-top: 8px;
 }
 
+/* Same colours as the dashboard's "Rooms available vs required" charts */
 .lp-compare-bar--need {
   width: 88%;
-  background: #34d399;
+  background: var(--required);
 }
 
 .lp-compare-bar--capacity {
   width: 62%;
-  background: #047857;
+  background: var(--available);
 }
 
 .lp-gap-steps {
@@ -775,11 +763,11 @@
 .lp-gap-steps span {
   padding: 8px 10px;
   border-radius: 10px;
-  background: #ecfdf5;
-  border: 1px solid #a7f3d0;
+  background: var(--accent-soft);
+  border: 1px solid var(--accent-line);
   font-size: 12px;
   font-weight: 600;
-  color: #065f46;
+  color: var(--accent);
 }
 
 .lp-year-tabs {
@@ -792,49 +780,17 @@
   height: 34px;
   padding: 0 12px;
   border-radius: 10px;
-  border: 1px solid #a7f3d0;
-  background: #ffffff;
-  color: #047857;
+  border: 1px solid var(--accent-line);
+  background: var(--surface);
+  color: var(--accent);
   font-size: 13px;
   font-weight: 600;
   cursor: pointer;
 }
 
 .lp-year-tabs button.is-active {
-  background: #d1fae5;
-  border-color: #6ee7b7;
-}
-
-.lp-projection {
-  position: relative;
-  height: 180px;
-  margin-top: 8px;
-  border-radius: 10px;
-  background: linear-gradient(180deg, #f8fafc, #ecfdf5);
-  border: 1px solid rgba(15, 23, 42, 0.08);
-  overflow: hidden;
-}
-
-.lp-projection-line {
-  position: absolute;
-  left: 16px;
-  right: 16px;
-  bottom: 24px;
-  height: 4px;
-  border-radius: 999px;
-  transform-origin: left center;
-}
-
-.lp-projection-line--capacity {
-  background: #94a3b8;
-  width: 70%;
-}
-
-.lp-projection-line--demand {
-  bottom: 48px;
-  background: #059669;
-  width: 86%;
-  transition: transform 220ms ease;
+  background: var(--accent-soft);
+  border-color: var(--accent-line);
 }
 
 .lp-projection-key {
@@ -842,7 +798,7 @@
   flex-wrap: wrap;
   gap: 12px 18px;
   font-size: 12px;
-  color: #64748b;
+  color: var(--muted);
 }
 
 .lp-plan-grid {
@@ -866,16 +822,16 @@
   width: 32px;
   height: 32px;
   border-radius: 10px;
-  border: 1px solid #a7f3d0;
-  background: #ecfdf5;
-  color: #047857;
+  border: 1px solid var(--accent-line);
+  background: var(--accent-soft);
+  color: var(--accent);
   flex-shrink: 0;
 }
 
 .lp-plan-card h3 {
   margin: 4px 0 0;
   font-size: 14px;
-  color: #047857;
+  color: var(--accent);
 }
 
 .lp-plan-card p {
@@ -887,8 +843,8 @@
 
 .lp-plan-card:hover {
   transform: translateY(-2px);
-  border-color: #6ee7b7;
-  box-shadow: 0 12px 28px rgba(4, 120, 87, 0.08);
+  border-color: var(--accent-line);
+  box-shadow: 0 12px 28px color-mix(in srgb, var(--accent) 80%, transparent);
 }
 
 .lp-section--method {
@@ -918,15 +874,15 @@
 .lp-method-step > span:first-child {
   padding: 8px 12px;
   border-radius: 10px;
-  background: #ecfdf5;
-  border: 1px solid #a7f3d0;
+  background: var(--accent-soft);
+  border: 1px solid var(--accent-line);
   font-size: 12px;
   font-weight: 700;
-  color: #065f46;
+  color: var(--accent);
 }
 
 .lp-method-arrow {
-  color: #94a3b8;
+  color: var(--muted);
   font-weight: 700;
 }
 
@@ -936,8 +892,8 @@
   padding: 40px 28px;
   text-align: center;
   border-radius: 12px;
-  border: 1px solid #a7f3d0;
-  background: linear-gradient(180deg, #ecfdf5, #ffffff);
+  border: 1px solid var(--accent-line);
+  background: linear-gradient(180deg, var(--accent-soft), var(--surface));
 }
 
 .lp-final-cta h2 {
@@ -954,7 +910,7 @@
 
 .lp-footer {
   border-top: 1px solid var(--line);
-  background: #ffffff;
+  background: var(--surface);
 }
 
 .lp-footer-inner {
@@ -989,16 +945,16 @@
   font-size: 11px;
   letter-spacing: 0.12em;
   text-transform: uppercase;
-  color: #64748b;
+  color: var(--muted);
 }
 
 .lp-footer-col a {
   font-size: 13px;
-  color: #334155;
+  color: var(--ink-2);
 }
 
 .lp-footer-col a:hover {
-  color: #047857;
+  color: var(--accent);
 }
 
 .lp-footer-base {
@@ -1011,7 +967,7 @@
   justify-content: space-between;
   gap: 8px 16px;
   font-size: 12px;
-  color: #64748b;
+  color: var(--muted);
 }
 
 .lp-footer-base nav {
@@ -1021,7 +977,7 @@
 }
 
 .lp-footer-base a:hover {
-  color: #0f172a;
+  color: var(--ink);
 }
 
 /* —— Auth / login —— */
@@ -1031,7 +987,7 @@
   align-items: center;
   justify-content: center;
   padding: 40px 16px;
-  background: #f8fafc;
+  background: var(--page);
 }
 
 .auth-page .login-card {
@@ -1061,7 +1017,7 @@
   align-items: center;
   gap: 8px !important;
   width: auto !important;
-  color: #334155;
+  color: var(--ink-2);
   cursor: pointer;
 }
 
@@ -1075,7 +1031,7 @@
 .auth-link-btn {
   border: 0;
   background: transparent;
-  color: #047857;
+  color: var(--accent);
   font-size: 13px;
   font-weight: 600;
   cursor: pointer;
@@ -1092,7 +1048,7 @@
   width: 100%;
   font-size: 13px;
   font-weight: 600;
-  color: #b91c1c;
+  color: var(--deficit);
 }
 
 .auth-back {
@@ -1103,7 +1059,7 @@
 }
 
 .auth-back a {
-  color: #047857;
+  color: var(--accent);
   font-weight: 600;
 }
 
@@ -1159,10 +1115,8 @@
 }
 
 /* —— Illustrations in the landing placeholders (src/site/Illustrations.tsx) —— */
-.lp-geo-panel,
-.lp-geo-panel--demand {
+.lp-geo-panel {
   min-height: 340px;
-  background: linear-gradient(160deg, #f8fffb, #ecfdf5);
 }
 
 .lp-geo-svg {
@@ -1177,23 +1131,7 @@
   z-index: 1;
   padding: 6px 10px;
   border-radius: 8px;
-  background: rgba(255, 255, 255, 0.88);
-}
-
-.lp-illustration-tag {
-  position: absolute;
-  top: 10px;
-  left: 10px;
-  z-index: 1;
-  padding: 3px 8px;
-  border-radius: 999px;
-  border: 1px solid #a7f3d0;
-  background: rgba(255, 255, 255, 0.92);
-  font-size: 10px;
-  font-weight: 600;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-  color: #047857;
+  background: color-mix(in srgb, var(--surface) 90%, transparent);
 }
 
 .lp-demand-legend span,
@@ -1214,14 +1152,37 @@
 .lp-future {
   position: relative;
   margin-top: 8px;
-  padding: 34px 8px 4px;
+  padding: 16px 8px 4px;
   border-radius: 10px;
-  border: 1px solid rgba(15, 23, 42, 0.08);
-  background: linear-gradient(180deg, #f8fafc, #ecfdf5);
+  border: 1px solid var(--line);
+  background: var(--page);
 }
 
 .lp-future svg {
   display: block;
   width: 100%;
   height: auto;
+}
+
+/* —— Light / dark switch (theme.tsx ThemeToggle) —— */
+.lp-theme-btn {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--ink-2);
+  cursor: pointer;
+}
+
+.lp-theme-btn:hover { color: var(--ink); }
+
+.auth-page { position: relative; }
+
+.auth-theme-btn {
+  position: absolute;
+  top: 16px;
+  right: 16px;
 }
