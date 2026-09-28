@@ -90,6 +90,9 @@ def projection_config(base: P.Base, catchment: pd.DataFrame) -> dict:
         "population": {g: {d: [int(v) for v in row] for d, row in t.iterrows()}
                        for g, t in P.default_intake(catchment, base.info).items()},
         "estimated": P.ESTIMATED,
+        # children aged 3 in each pre-primary school's catchment (filled as P.fill_catchment): [school, 2027, ... 2030]
+        "catchment": {"years": P.YEARS[1:],
+                      "rows": [[int(code), *(int(v) for v in row)] for code, row in catchment.iterrows()]},
         "defaultLabel": P.DEFAULT_LABEL,
         # combinations of each level (empty = level without combinations), most students first
         "combos": [base.combos.get(label, []) for label, _ in P.LEVELS],

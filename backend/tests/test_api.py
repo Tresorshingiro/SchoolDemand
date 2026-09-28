@@ -44,6 +44,19 @@ def test_default_projection_matches_the_files(client):
     assert got["combos"] == expected["combos"]
 
 
+def test_catchment_per_school_adds_up_to_the_default_plan(client):
+    cfg = client.get("/api/projection/config").json()
+    cat = cfg["catchment"]
+    assert cat["years"] == P.YEARS[1:] and len(cat["rows"]) > 1000
+    district = {r["c"]: r["d"] for r in client.get("/api/school-levels").json()}
+    totals: dict[str, list[int]] = {}
+    for code, *values in cat["rows"]:
+        t = totals.setdefault(district[code], [0] * len(values))
+        for k, v in enumerate(values):
+            t[k] += v
+    assert totals == cfg["population"]["N1"]  # the default plan is the district totals of the catchments
+
+
 def test_custom_plan_changes_n1(client):
     cfg = client.get("/api/projection/config").json()
     gasabo = cfg["population"]["N1"]["Gasabo"]

@@ -237,6 +237,77 @@ export function StackedGradesByArea({ data, grades, measure, mode, areaLabel, on
   return <EChart option={option} height={height} onClick={onPick} label={`${noun} by ${areaLabel} and grade`} />;
 }
 
+/* ------------------------------------------------------------------ catchment demand per school */
+
+export interface SchoolDemand {
+  code: number;
+  name: string;
+  sub: string; // district · sector
+  demand: number; // children aged 3 in the catchment, `year`
+  enrolled: number; // N1 in the base year
+  rooms: number; // rooms shared to N1 in `year`
+}
+
+/** Children aged 3 in each school's catchment area against its N1 today, one school per row, largest first. */
+export function CatchmentDemandChart({ data, year, baseYear, capacity, mode, onPick }: {
+  data: SchoolDemand[];
+  year: number;
+  baseYear: number;
+  capacity: number;
+  mode: Mode;
+  onPick?: (code: string) => void;
+}) {
+  const option = useMemo(() => {
+    const c = COLORS[mode];
+    const items = [...data].reverse(); // first item on top
+    return {
+      animationDuration: 300,
+      grid: { left: 8, right: 56, top: 32, bottom: 8, containLabel: true },
+      legend: {
+        top: 0, left: 0, itemWidth: 10, itemHeight: 10, icon: 'roundRect',
+        textStyle: { color: c.ink2, fontFamily: FONT, fontSize: 12 },
+      },
+      tooltip: {
+        ...tooltipBase(mode),
+        formatter: (ps: { dataIndex: number }[]) => {
+          const d = items[ps[0].dataIndex];
+          const change = d.demand - d.enrolled;
+          return `<div style="font-weight:600">${d.name}</div>` +
+            `<div style="color:${c.ink2};margin-bottom:4px">${d.sub}</div>` +
+            row(c.required, `Children aged 3 in the catchment, ${year}`, fmt(d.demand)) +
+            row(c.muted, `N1 students ${baseYear}`, fmt(d.enrolled)) +
+            `<div style="color:${c.ink2};margin-top:2px">${fmtGap(change)} (${d.enrolled ? pct(Math.abs(change), d.enrolled) : '—'} ${change >= 0 ? 'more' : 'fewer'})</div>` +
+            `<div style="border-top:1px solid ${c.grid};margin:4px 0"></div>` +
+            row('transparent', `Rooms needed for them (${capacity} per room)`, fmt(Math.ceil(d.demand / capacity))) +
+            row('transparent', `Rooms for N1 in ${year}`, fmt(d.rooms)) +
+            (onPick ? `<div style="color:${c.muted};margin-top:2px">Click for the school's details</div>` : '');
+        },
+      },
+      xAxis: { type: 'value', ...axisStyle(mode), axisLine: { show: false }, splitNumber: 4 },
+      yAxis: {
+        type: 'category', data: items.map((d) => String(d.code)), ...axisStyle(mode),
+        axisLabel: {
+          ...axisStyle(mode).axisLabel, color: c.ink2, width: 190, overflow: 'truncate',
+          formatter: (v: string) => items.find((d) => String(d.code) === v)?.name ?? v,
+        },
+      },
+      series: [
+        { type: 'bar', name: `Children aged 3 in the catchment, ${year}`, data: items.map((d) => d.demand),
+          barMaxWidth: 12, barGap: '15%', itemStyle: { color: c.required, borderRadius: [0, 4, 4, 0] },
+          label: { show: true, position: 'right', color: c.ink2, fontSize: 11, fontFamily: FONT,
+            formatter: (p: { value: number }) => fmt(p.value) },
+          cursor: onPick ? 'pointer' : 'default' },
+        { type: 'bar', name: `N1 students ${baseYear}`, data: items.map((d) => d.enrolled),
+          barMaxWidth: 12, itemStyle: { color: c.muted, borderRadius: [0, 4, 4, 0] },
+          cursor: onPick ? 'pointer' : 'default' },
+      ],
+    };
+  }, [data, year, baseYear, capacity, mode, onPick]);
+  const height = Math.max(200, data.length * 30 + 48);
+  return <EChart option={option} height={height} onClick={onPick}
+    label={`Children aged 3 in each school's catchment area in ${year} against N1 students in ${baseYear}`} />;
+}
+
 /* ------------------------------------------------------------------ students per room by area */
 
 /** Students per available room in each area, against the room capacity: above the line, rooms are over-full. */

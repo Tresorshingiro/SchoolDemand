@@ -125,10 +125,13 @@ interface Props {
   controls?: ReactNode;
   /** Prefix for the scope line on the right of the filter bar. */
   scopePrefix?: string;
-  /** Extra cards below the stat tiles, given the school codes in scope and the current filters. */
-  top?: (codes: Set<number>, filters: Filters) => ReactNode;
+  /** Extra cards below the stat tiles, given the school codes in scope, the current filters and a function that opens
+   * a school's details (school code). */
+  top?: (codes: Set<number>, filters: Filters, pickSchool: (code: string) => void) => ReactNode;
   /** Extra cards opening the shortage part of the page. */
   shortageTop?: (codes: Set<number>, filters: Filters) => ReactNode;
+  /** Extra cards after the shortage charts, before the school table (same arguments as `top`). */
+  afterCharts?: (codes: Set<number>, filters: Filters, pickSchool: (code: string) => void) => ReactNode;
   notes: { available: string; gradeChart: string };
   /** Line shown under the school name in the detail panel. */
   panelContext?: string;
@@ -137,7 +140,7 @@ interface Props {
 
 /** Filter bar, stat tiles, resource charts, then shortage map, charts and school table over one Dataset. */
 export default function Overview({
-  data, mode, showLevels = false, controls, scopePrefix, top, shortageTop, notes, panelContext, footer,
+  data, mode, showLevels = false, controls, scopePrefix, top, shortageTop, afterCharts, notes, panelContext, footer,
 }: Props) {
   const [filters, setFilters] = useState<Filters>({ level: PRIMARY, district: '', sector: '' });
   const [selected, setSelected] = useState<number | null>(null);
@@ -213,7 +216,6 @@ export default function Overview({
     setFilters({ level: i, district: '', sector: '' });
     setSelected(null);
   };
-  const flagged = useMemo(() => new Set(Object.keys(data.meta.schoolIssues).map(Number)), [data.meta]);
   const gaps = useMemo(() => rows.map((r) => r.gap), [rows]);
 
   const { meta } = data;
@@ -293,7 +295,7 @@ export default function Overview({
         </div>
         <Tiles t={t} notes={notes} level={level} />
 
-        {top?.(codes, filters)}
+        {top?.(codes, filters, pickSchool)}
 
         {/* ---------------------------------------------------------------- what schools have */}
         <SectionTitle title="Students and rooms"
@@ -370,8 +372,10 @@ export default function Overview({
           </Card>
         </div>
 
+        {afterCharts?.(codes, filters, pickSchool)}
+
         <Card title="Schools" sub="Largest deficits first. Click a row for details; click a column to sort. The filters here only narrow this table.">
-          <SchoolTable rows={rows} mode={mode} selected={selected} onSelect={setSelected} flagged={flagged}
+          <SchoolTable rows={rows} mode={mode} selected={selected} onSelect={setSelected}
             fullDay={level.fullDay} />
         </Card>
 

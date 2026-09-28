@@ -61,7 +61,9 @@ with `VITE_API_URL`. Viewers need internet access to `js.arcgis.com` and `servic
 - **District and sector boundaries** (switchable). Sector lines are faint and dashed; nationally they appear from about
   zoom 11 (names too), and when a district is picked in the filters only its sectors show, from about zoom 9. The
   district / sector picked in the page filters is outlined in amber.
-- **Legend panel on the map** (bottom left, collapsible) is also the map's filter: click Deficit / Exact fit / Surplus
+- The map opens on the **whole country** filling the view (zoom is not snapped to tile levels); the **Home** button under
+  the zoom buttons goes back to it, and so does clearing the district filter.
+- **Legend panel on the map** (top left, under zoom and Home, collapsible) is also the map's filter: click Deficit / Exact fit / Surplus
   or a class (10+ short … 10+ spare) to hide or show those schools; it holds the Clusters / Schools switch and the
   District / Sector boundary checkboxes. **Find a school** (top left) searches the schools in view.
 - District names show from about zoom 9 (at national zoom the clusters and district outlines carry the view).
@@ -85,6 +87,9 @@ New students:
     shared to schools by GIS; 2030 repeats 2029 in that file). The **intake plan** table (district × year) defaults to
     the district totals; editing a district scales its schools in proportion to their catchment. Editable cell by cell,
     reset to the catchment default, or downloaded / uploaded as a CSV (`pop3_YYYY` columns).
+  - **Demand per school from its catchment area** (Pre-Primary): the children aged 3 in each school's catchment in the
+    selected year (2027 when 2026 is selected) against its N1 students in 2026, the 50 largest catchments in scope; the tooltip adds the rooms those children need and the rooms N1 has that year. Per-school figures
+    come with `GET /api/projection/config` (`catchment`).
   - **P1** = the N3 of the year before: each school's N3 moves to its own P1; stand-alone nurseries' N3 is shared to the
     primary schools of their sector. Children who did not attend pre-primary are not added.
   - **S1** = all P6 pupils of the district the year before.

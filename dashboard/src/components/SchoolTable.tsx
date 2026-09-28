@@ -54,14 +54,12 @@ interface Props {
   mode: Mode;
   selected: number | null;
   onSelect: (code: number) => void;
-  /** Codes of schools with data-quality flags. */
-  flagged: Set<number>;
   /** Full-day level: the double-shift column counts class groups without a room. */
   fullDay: boolean;
 }
 
-type FilterKey = 'gap' | 'shift' | 'size' | 'quality';
-const NO_FILTERS: Record<FilterKey, string> = { gap: '', shift: '', size: '', quality: '' };
+type FilterKey = 'gap' | 'shift' | 'size';
+const NO_FILTERS: Record<FilterKey, string> = { gap: '', shift: '', size: '' };
 
 function FilterSelect({ label, value, all, options, counts, onChange }: {
   label: string; value: string; all: string; options: Option[]; counts: Map<string, number>; onChange: (v: string) => void;
@@ -77,7 +75,7 @@ function FilterSelect({ label, value, all, options, counts, onChange }: {
   );
 }
 
-export default function SchoolTable({ rows, mode, selected, onSelect, flagged, fullDay }: Props) {
+export default function SchoolTable({ rows, mode, selected, onSelect, fullDay }: Props) {
   const shiftOptions = fullDay ? NO_ROOM_OPTIONS : SHIFT_OPTIONS;
   const colLabel = (c: (typeof COLS)[number]) => (c.key === 'ds' && fullDay ? 'No room' : c.label);
   const [sort, setSort] = useState<{ key: Key; asc: boolean }>({ key: 'gap', asc: true });
@@ -86,13 +84,9 @@ export default function SchoolTable({ rows, mode, selected, onSelect, flagged, f
   const [page, setPage] = useState(0);
   const printing = usePrinting();
 
-  const qualityOptions = useMemo<Option[]>(() => [
-    { key: 'flagged', label: 'With data-quality flags', test: (r) => flagged.has(r.c) },
-    { key: 'clean', label: 'No flags', test: (r) => !flagged.has(r.c) },
-  ], [flagged]);
   const groups = useMemo<Record<FilterKey, Option[]>>(
-    () => ({ gap: GAP_OPTIONS, shift: shiftOptions, size: SIZE_OPTIONS, quality: qualityOptions }),
-    [qualityOptions, shiftOptions],
+    () => ({ gap: GAP_OPTIONS, shift: shiftOptions, size: SIZE_OPTIONS }),
+    [shiftOptions],
   );
   const counts = useMemo(() => {
     const m = new Map<string, number>();
@@ -158,8 +152,6 @@ export default function SchoolTable({ rows, mode, selected, onSelect, flagged, f
           onChange={(v) => setFilter('shift', v)} />
         <FilterSelect label="School size" value={filters.size} all="Any size" options={SIZE_OPTIONS} counts={counts}
           onChange={(v) => setFilter('size', v)} />
-        <FilterSelect label="Data quality" value={filters.quality} all="Any data quality" options={qualityOptions} counts={counts}
-          onChange={(v) => setFilter('quality', v)} />
         {(active.length > 0 || query) && (
           <button type="button" className="text-sm text-accent hover:underline"
             onClick={() => {

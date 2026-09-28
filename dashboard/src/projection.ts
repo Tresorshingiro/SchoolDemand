@@ -25,6 +25,8 @@ export interface ProjectionBase {
   schoolFeeds: [string, string][]; // leavers -> entry grade next year in the same school, else pooled by sector: ['N3', 'P1']
   population: Record<string, Record<string, number[]>>; // entry grade -> district -> default plan (catchment totals), years[1..]
   estimated: Record<string, number[]>; // entry grade -> years not measured (catchment 2030 repeats 2029)
+  /** Children aged 3 in each pre-primary school's catchment area: rows [school, value per year of `years`]. */
+  catchment: { years: number[]; rows: number[][] };
   defaultLabel: string; // name of the default plan
   combos: string[][]; // per level: its combinations, most students first (empty = no combinations)
 }
@@ -161,6 +163,39 @@ export function comboTable(result: ProjectedYear[], meta: Meta, grades: string[]
     }
   });
   return [...rows.values()];
+}
+
+/** One pre-primary school's catchment demand in a year, next to its N1 today and its N1 rooms that year. */
+export interface CatchmentDemand {
+  code: number;
+  demand: number; // children aged 3 in the catchment area that year
+  enrolled: number; // N1 students in the base year
+  rooms: number; // rooms shared to N1 that year (projection)
+}
+
+/**
+ * Catchment demand of the schools in `codes` for `year` (the first catchment year when `year` has none, e.g. 2026).
+ * Returns the year used and one row per school with a catchment figure.
+ */
+export function catchmentDemand(base: ProjectionBase, result: ProjectedYear[], meta: Meta, year: number,
+  codes: Set<number>): { year: number; rows: CatchmentDemand[] } {
+  const { years, rows } = base.catchment;
+  const yi = Math.max(0, years.indexOf(year));
+  const used = years[yi];
+  const n1 = meta.grades.indexOf('N1');
+  const n1Of = (py: ProjectedYear | undefined, col: number) => {
+    const m = new Map<number, number>();
+    for (const g of py?.grades ?? []) if (g[1] === n1) m.set(g[0], g[col]);
+    return m;
+  };
+  const enrolled = n1Of(result.find((py) => py.year === base.baseYear), 2);
+  const rooms = n1Of(result.find((py) => py.year === used), 5);
+  return {
+    year: used,
+    rows: rows.filter(([c]) => codes.has(c)).map(([c, ...v]) => ({
+      code: c, demand: v[yi], enrolled: enrolled.get(c) ?? 0, rooms: rooms.get(c) ?? 0,
+    })),
+  };
 }
 
 /** Students in one grade by district (rows) and year (columns), e.g. the new S1 each year. */

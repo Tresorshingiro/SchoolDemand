@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import esriConfig from '@arcgis/core/config';
 import { version as arcgisVersion } from '@arcgis/core/kernel';
 import ArcGISMap from '@arcgis/core/Map';
@@ -19,6 +20,8 @@ import TextSymbol from '@arcgis/core/symbols/TextSymbol';
 import Graphic from '@arcgis/core/Graphic';
 import Polygon from '@arcgis/core/geometry/Polygon';
 import Extent from '@arcgis/core/geometry/Extent';
+import Viewpoint from '@arcgis/core/Viewpoint';
+import Home from '@arcgis/core/widgets/Home';
 import * as reactiveUtils from '@arcgis/core/core/reactiveUtils';
 import '@arcgis/core/assets/esri/themes/light/main.css';
 
@@ -33,7 +36,8 @@ const ARCGIS_TOKEN = import.meta.env.VITE_ARCGIS_TOKEN as string | undefined;
 if (ARCGIS_TOKEN) esriConfig.apiKey = ARCGIS_TOKEN;
 
 const BOUNDARIES = `${API_URL}/boundaries`; // GeoJSON from the database (PostGIS)
-const RWANDA_CENTER: [number, number] = [29.87, -1.94];
+// The whole country, filling the map: the default view and where the Home button goes back to
+const HOME_EXTENT = new Extent({ xmin: 28.84, ymin: -2.86, xmax: 30.92, ymax: -1.03, spatialReference: { wkid: 4326 } });
 // Rwanda plus a margin: the view cannot be panned away from it
 const RWANDA_EXTENT = new Extent({ xmin: 28.7, ymin: -3.0, xmax: 31.05, ymax: -0.9, spatialReference: { wkid: 4326 } });
 const SERVICES = 'https://services.arcgisonline.com/ArcGIS/rest/services';
@@ -264,16 +268,16 @@ function LegendRow({ on, partly = false, color, label, count, indent = false, on
   return (
     <button type="button" role="checkbox" aria-checked={on ? true : partly ? 'mixed' : false} onClick={onClick}
       title={on ? `Hide ${label}` : `Show ${label}`}
-      className={`flex w-full items-center gap-2 rounded px-1.5 py-[3px] text-left hover:bg-[var(--line)] ${
-        indent ? 'pl-5 text-[11px]' : 'text-xs font-medium'} ${on || partly ? 'text-ink' : 'text-muted'}`}>
+      className={`flex w-full items-center gap-1.5 rounded px-1.5 py-[2px] text-left hover:bg-[var(--line)] ${
+        indent ? 'pl-4 text-[10.5px]' : 'text-[11px] font-medium'} ${on || partly ? 'text-ink' : 'text-muted'}`}>
       <span className="inline-block shrink-0 rounded-full"
         style={{
-          width: indent ? 9 : 11, height: indent ? 9 : 11,
+          width: indent ? 8 : 10, height: indent ? 8 : 10,
           background: on ? color : partly ? `linear-gradient(90deg, ${color} 50%, transparent 50%)` : 'transparent',
           boxShadow: `inset 0 0 0 1.5px ${color}`,
         }} />
       <span className={`flex-1 truncate ${on || partly ? '' : 'line-through'}`}>{label}</span>
-      {count !== undefined && <span className="num text-[11px] text-muted">{fmt(count)}</span>}
+      {count !== undefined && <span className="num text-[10.5px] text-muted">{fmt(count)}</span>}
     </button>
   );
 }
@@ -281,7 +285,7 @@ function LegendRow({ on, partly = false, color, label, count, indent = false, on
 function LegendCheck({ on, label, onClick }: { on: boolean; label: string; onClick: () => void }) {
   return (
     <button type="button" role="checkbox" aria-checked={on} onClick={onClick}
-      className={`flex items-center gap-1.5 rounded px-1.5 py-[3px] text-xs hover:bg-[var(--line)] ${on ? 'text-ink' : 'text-muted'}`}>
+      className={`flex items-center gap-1.5 rounded px-1.5 py-[2px] text-[11px] hover:bg-[var(--line)] ${on ? 'text-ink' : 'text-muted'}`}>
       <span className={`grid h-3 w-3 place-items-center rounded-[3px] border ${on ? 'border-accent bg-accent text-white' : 'border-[var(--muted)]'}`}>
         {on && (
           <svg viewBox="0 0 12 12" width="9" height="9" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
@@ -297,6 +301,13 @@ function LegendCheck({ on, label, onClick }: { on: boolean; label: string; onCli
 export default function SchoolMap({ rows, mode, selected, onSelect, district = '', sector = '' }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<MapView | null>(null);
+  // The legend lives in the map's own top-left column (under zoom and Home); React renders into it with a portal
+  const [legendHost] = useState(() => {
+    const el = document.createElement('div');
+    el.className = 'map-legend-host';
+    el.style.pointerEvents = 'auto'; // the map's UI corners let clicks through to the map unless told otherwise
+    return el;
+  });
   const layersRef = useRef<GeoJSONLayer[]>([]); // the school layers: overview (clusters / sized dots) and near
   const bounds = useRef<{ districts: GeoJSONLayer; sectors: GeoJSONLayer; mask: GraphicsLayer; focus: GraphicsLayer } | null>(null);
   const onSelectRef = useRef(onSelect);
@@ -384,13 +395,16 @@ export default function SchoolMap({ rows, mode, selected, onSelect, district = '
     const view = new MapView({
       container: containerRef.current,
       map,
-      center: RWANDA_CENTER,
-      zoom: 8,
-      constraints: { minZoom: 8, maxZoom: 18, rotationEnabled: false, geometry: RWANDA_EXTENT },
+      extent: HOME_EXTENT,
+      // Zoom is not snapped to the tile levels, so the country fills the map whatever its size
+      constraints: { minZoom: 7, maxZoom: 18, snapToZoom: false, rotationEnabled: false, geometry: RWANDA_EXTENT },
       ui: { components: ['zoom', 'attribution'] },
       popupEnabled: false,
     });
     viewRef.current = view;
+    // Top left, under the zoom buttons: Home (back to the whole country), then the legend (rendered by React below)
+    view.ui.add(new Home({ view, viewpoint: new Viewpoint({ targetGeometry: HOME_EXTENT }) }), 'top-left');
+    view.ui.add(legendHost, 'top-left');
     bounds.current = { districts, sectors, mask, focus };
     pendingRef.current = showBasemap(view, basemap, mode, setBasemapName);
 
@@ -436,6 +450,7 @@ export default function SchoolMap({ rows, mode, selected, onSelect, district = '
       click.remove();
       move.remove();
       leave.remove();
+      view.ui.remove(legendHost);
       view.destroy();
       viewRef.current = null;
       layersRef.current = [];
@@ -586,10 +601,14 @@ export default function SchoolMap({ rows, mode, selected, onSelect, district = '
     if (!printing) setShot(null);
   }, [printing]);
 
-  // Zoom to the filtered schools (not on theme or display changes).
+  // Zoom to the filtered schools (not on theme or display changes): the whole country without an area filter.
   useEffect(() => {
     const view = viewRef.current;
     if (!view || !ready) return;
+    if (!district) {
+      view.goTo(HOME_EXTENT, { duration: 600 }).catch(() => undefined);
+      return;
+    }
     const pts = rows.filter((r) => r.x !== null && r.y !== null);
     if (!pts.length) return;
     const xs = pts.map((r) => r.x as number);
@@ -599,7 +618,7 @@ export default function SchoolMap({ rows, mode, selected, onSelect, district = '
       spatialReference: { wkid: 4326 },
     });
     view.goTo(extent.expand(1.25), { duration: 600 }).catch(() => undefined);
-  }, [rows, ready]);
+  }, [rows, ready, district]);
 
   // Highlight and fly to the selected school, close enough to see it on its own with its name.
   useEffect(() => {
@@ -695,10 +714,11 @@ export default function SchoolMap({ rows, mode, selected, onSelect, district = '
         </div>
       )}
 
-      {/* Bottom left: the legend, which is also the map's filter */}
-      <div className={`${panel} absolute bottom-7 left-3 z-10 w-[236px] text-ink2`}>
+      {/* Top left, under zoom and Home (the map's own control column): the legend, which is also the map's filter */}
+      {createPortal(
+      <div className={`${panel} w-[190px] text-ink2 print:hidden`}>
         <button type="button" onClick={() => setLegendOpen((o) => !o)} aria-expanded={legendOpen}
-          className="flex w-full items-center justify-between gap-3 whitespace-nowrap px-3 py-2 text-left text-xs font-semibold text-ink">
+          className="flex w-full items-center justify-between gap-2 whitespace-nowrap px-2.5 py-1.5 text-left text-[11px] font-semibold text-ink">
           <span>Classroom gap</span>
           <span className="flex items-center gap-2 font-normal text-muted" title={`${fmt(shown)} of ${fmt(mapped)} schools shown`}>
             <span className="num">{fmt(shown)} / {fmt(mapped)}</span>
@@ -709,7 +729,7 @@ export default function SchoolMap({ rows, mode, selected, onSelect, district = '
           </span>
         </button>
         {legendOpen && (
-          <div className="border-t border-line px-1.5 pb-2 pt-1.5">
+          <div className="border-t border-line px-1 pb-1.5 pt-1">
             {STATUSES.map(({ key, classes }) => {
               const on = classes.every((c) => !hidden.has(c));
               const partly = !on && classes.some((c) => !hidden.has(c));
@@ -727,32 +747,34 @@ export default function SchoolMap({ rows, mode, selected, onSelect, district = '
                 </div>
               );
             })}
-            <div className="mt-1.5 flex items-center justify-between border-t border-line px-1.5 pt-2 print:hidden">
+            <div className="mt-1 flex items-center justify-between border-t border-line px-1 pt-1.5 print:hidden">
               <div className="flex gap-0.5 rounded-md bg-[var(--line)] p-0.5" role="radiogroup" aria-label="Show schools as">
                 {([[true, 'Clusters'], [false, 'Schools']] as const).map(([v, label]) => (
                   <button key={label} type="button" role="radio" aria-checked={clustered === v} onClick={() => setClustered(v)}
-                    className={`rounded px-2 py-0.5 text-[11px] ${clustered === v ? 'bg-surface font-medium text-ink shadow-sm' : 'text-ink2 hover:text-ink'}`}>
+                    className={`rounded px-1.5 py-0.5 text-[10.5px] ${clustered === v ? 'bg-surface font-medium text-ink shadow-sm' : 'text-ink2 hover:text-ink'}`}>
                     {label}
                   </button>
                 ))}
               </div>
               {hidden.size > 0 && (
-                <button type="button" className="text-[11px] text-accent hover:underline" onClick={() => setHidden(new Set())}>
+                <button type="button" className="text-[10.5px] text-accent hover:underline" onClick={() => setHidden(new Set())}>
                   Show all
                 </button>
               )}
             </div>
-            <p className="px-1.5 pt-1.5 text-[11px] leading-snug text-muted">
-              {clustered ? 'Circle = nearby schools grouped; colour = their average gap, number = schools. ' : 'Dot size = students. '}
-              Zoom in to see each school with its name.
+            <p className="px-1 pt-1 text-[10.5px] leading-snug text-muted">
+              {clustered ? 'Circle = nearby schools; colour = average gap, number = schools. ' : 'Dot size = students. '}
+              Zoom in for each school.
             </p>
-            <div className="mt-1.5 flex gap-1 border-t border-line pt-1.5 print:hidden">
+            <div className="mt-1 flex gap-0.5 border-t border-line pt-1 print:hidden">
               <LegendCheck on={showDistricts} label="Districts" onClick={() => setShowDistricts((v) => !v)} />
               <LegendCheck on={showSectors} label="Sectors" onClick={() => setShowSectors((v) => !v)} />
             </div>
           </div>
         )}
-      </div>
+      </div>,
+      legendHost,
+      )}
 
       {!ready && !error && (
         <div className="absolute inset-0 grid place-items-center text-sm text-muted">Loading map…</div>

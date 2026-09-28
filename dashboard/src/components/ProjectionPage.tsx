@@ -1,14 +1,14 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { fmt, type Dataset, type SchoolLevel } from '../data';
+import { fmt, type Dataset, type Meta, type SchoolLevel } from '../data';
 import {
-  cohortTable, comboTable, createScenario, defaultIntake, deleteScenario, fetchProjection, getScenario, gradeByDistrict,
+  catchmentDemand, cohortTable, comboTable, createScenario, defaultIntake, deleteScenario, fetchProjection, getScenario, gradeByDistrict,
   listScenarios, loadProjectionBase, projectionMeta, sameIntake, updateScenario, yearDataset, yearTotals,
   type Intake, type ProjectionBase, type ProjectedYear, type Scenario, type ScenarioSummary,
 } from '../projection';
 import type { Mode } from '../theme';
 import Overview, { Card } from './Overview';
 import IntakePlanner, { FedEntrants } from './IntakePlanner';
-import { CohortChart, CompareBars, YearTrend } from './Charts';
+import { CatchmentDemandChart, CohortChart, CompareBars, YearTrend, type SchoolDemand } from './Charts';
 
 // The plan on screen (with unsaved edits) and the saved scenario it came from, remembered in this browser.
 // v4: plans are shared through the database (scenarios); the browser only remembers where you were.
@@ -135,6 +135,47 @@ function CombinationTable({ years, baseYear, year, rows }: {
         in the entry grade. A breakdown of the grade totals — rooms are counted per grade, not per combination.
       </p>
     </div>
+  );
+}
+
+const TOP_CATCHMENTS = 50; // schools in the catchment demand chart
+
+/** Pre-primary: children aged 3 in each school's catchment area (the demand for N1) against its N1 today. */
+function CatchmentDemandCard({ base, result, meta, year, codes, info, mode, onPick }: {
+  base: ProjectionBase; result: ProjectedYear[]; meta: Meta; year: number; codes: Set<number>;
+  info: Map<number, SchoolLevel>; mode: Mode; onPick: (code: string) => void;
+}) {
+  const { year: used, rows } = useMemo(() => catchmentDemand(base, result, meta, year, codes), [base, result, meta, year, codes]);
+  const data: SchoolDemand[] = useMemo(
+    () => [...rows].sort((a, b) => b.demand - a.demand).slice(0, TOP_CATCHMENTS).map((d) => {
+      const s = info.get(d.code);
+      return { ...d, name: s?.n ?? String(d.code), sub: s ? `${s.d} · ${s.s} · code ${d.code}` : `code ${d.code}` };
+    }),
+    [rows, info],
+  );
+  const total = rows.reduce((s, d) => s + d.demand, 0);
+  const enrolled = rows.reduce((s, d) => s + d.enrolled, 0);
+  const capacity = base.levels.find((l) => l.grades.includes('N1'))?.capacity ?? 45;
+  const notes = [
+    year !== used ? `${year} has no catchment figures: showing ${used}` : '',
+    base.estimated.N1?.includes(used) ? `${used} repeats 2029 in the catchment file` : '',
+  ].filter(Boolean).join(' · ');
+
+  return (
+    <Card title={`Demand per school from its catchment area, ${used}`}
+      sub={`Children aged 3 living in each pre-primary school's catchment area (NISR population shared to schools by GIS) against its N1 students in ${base.baseYear}. ${fmt(rows.length)} schools in scope: ${fmt(total)} children aged 3, ${fmt(enrolled)} in N1 in ${base.baseYear}.${notes ? ` ${notes}.` : ''} Largest first; click a bar for the school's details.`}>
+      <div className="print-expand max-h-[480px] overflow-y-auto px-2 pb-2">
+        {data.length ? (
+          <CatchmentDemandChart data={data} year={used} baseYear={base.baseYear} capacity={capacity} mode={mode} onPick={onPick} />
+        ) : (
+          <p className="px-2 py-6 text-sm text-muted">No pre-primary school with a catchment figure in this area.</p>
+        )}
+      </div>
+      <p className="px-4 pb-3 text-xs text-muted">
+        {data.length < rows.length ? `The ${data.length} largest catchments of ${fmt(rows.length)}. ` : ''}
+        The default intake plan brings exactly these children into N1; an edited plan scales each district's schools in proportion.
+      </p>
+    </Card>
   );
 }
 
@@ -317,6 +358,14 @@ export default function ProjectionPage({ current, mode }: { current: Dataset; mo
           </label>
         </>
       }
+      afterCharts={(codes, filters, pickSchool) => {
+        const level = base.levels.find((l) => l.level === filters.level) ?? base.levels[0];
+        // Pre-primary (the level whose entry grade comes from the catchment population): demand per school
+        return base.intakes[level.grades[0]] !== undefined ? (
+          <CatchmentDemandCard base={base} result={result} meta={meta} year={year} codes={codes} info={info}
+            mode={mode} onPick={pickSchool} />
+        ) : null;
+      }}
       top={(codes, filters) => {
         const level = base.levels.find((l) => l.level === filters.level) ?? base.levels[0];
         const entry = level.grades[0];
@@ -338,7 +387,8 @@ export default function ProjectionPage({ current, mode }: { current: Dataset; mo
                 ) : null}
 
               </Card>
-            ) : feed ? (
+            ) : null}
+            {age === undefined && feed ? (
               <Card title={`New ${entry} students per district`}
                 sub={`From the ${feed.source} of the year before${feed.sameSchool ? ' in the same school' : ''}${feed.targets.length > 1 ? `, split between ${feed.targets.join(' / ')} by each district's ${base.baseYear} mix` : ''} · nationally: ${perYear}`}
                 aside={<button type="button" onClick={() => setPlannerOpen((o) => !o)} aria-expanded={plannerOpen} className="rounded-md border border-line px-2.5 py-1 text-xs text-ink2 hover:text-ink print:hidden">{plannerOpen ? 'Hide table' : 'Show table'}</button>}>
