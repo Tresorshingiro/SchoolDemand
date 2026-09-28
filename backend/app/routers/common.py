@@ -10,8 +10,8 @@ from ..services.store import Payload, store
 
 
 def json_payload(request: Request, payload: Payload, *, max_age: int = 300) -> Response:
-    """Send a prepared JSON body, gzipped when the browser accepts it."""
-    headers = {"Cache-Control": f"public, max-age={max_age}", "Vary": "Accept-Encoding"}
+    """Send a prepared JSON body, gzipped when the browser accepts it. Private: only for the signed-in browser."""
+    headers = {"Cache-Control": f"private, max-age={max_age}", "Vary": "Accept-Encoding"}
     if "gzip" in request.headers.get("accept-encoding", ""):
         return Response(payload.gz, media_type="application/json", headers={**headers, "Content-Encoding": "gzip"})
     return Response(payload.raw, media_type="application/json", headers=headers)

@@ -6,10 +6,11 @@ from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import Response
 
 from ..schemas import ProjectionRequest
+from ..services.auth import current_user
 from ..services.store import store
 from .common import complete_intake, json_payload, require_data
 
-router = APIRouter(prefix="/projection", tags=["projection"], dependencies=[Depends(require_data)])
+router = APIRouter(prefix="/projection", tags=["projection"], dependencies=[Depends(current_user), Depends(require_data)])
 
 
 @router.get("/config", summary="Years, levels, grades, how new students enter, the default intake plan")

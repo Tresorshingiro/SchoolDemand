@@ -1,10 +1,11 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 
-// base './' so the built dist/ folder can be served from any path.
+// The site is served from the root of its address by default. Under a sub-path (e.g. https://server/school/) build
+// with VITE_BASE=/school/ — the pages, their files and the API (<base>/api) then all live under it.
 // Development: /api is forwarded to the FastAPI backend (uvicorn on port 8000, see backend/README.md).
 export default defineConfig({
-  base: './',
+  base: process.env.VITE_BASE ?? '/',
   plugins: [react()],
   build: { chunkSizeWarningLimit: 4000 },
   server: {

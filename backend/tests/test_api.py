@@ -86,3 +86,63 @@ def test_scenario_lifecycle(client):
 
 def test_reload_is_protected(client):
     assert client.post("/api/admin/reload").status_code in (401, 403)
+
+
+# ---------------------------------------------------------------- sign-in
+@pytest.mark.parametrize("method, path", [
+    ("GET", "/api/meta"), ("GET", "/api/school-levels"), ("GET", "/api/boundaries/districts"),
+    ("GET", "/api/projection/default"), ("POST", "/api/projection/run"), ("GET", "/api/scenarios"),
+    ("POST", "/api/scenarios"), ("DELETE", "/api/scenarios/1"), ("GET", "/api/auth/me"),
+])
+def test_data_needs_sign_in(anonymous, method, path):
+    assert anonymous.request(method, path, json={}).status_code == 401
+
+
+def test_health_is_public(anonymous):
+    assert anonymous.get("/api/health").status_code == 200
+
+
+def test_me(client, test_user):
+    me = client.get("/api/auth/me").json()
+    assert me["email"] == test_user["email"] and me["full_name"] == "Pytest User"
+
+
+def test_wrong_password(anonymous, test_user):
+    r = anonymous.post("/api/auth/login", json={**test_user, "password": "not-the-password"})
+    assert r.status_code == 401 and "Wrong email or password" in r.json()["detail"]
+    r = anonymous.post("/api/auth/login", json={"email": "nobody@example.test", "password": "whatever-123"})
+    assert r.status_code == 401
+
+
+def test_email_is_case_insensitive_and_cookie_is_httponly(anonymous, test_user):
+    r = anonymous.post("/api/auth/login", json={**test_user, "email": test_user["email"].upper()})
+    assert r.status_code == 200
+    cookie = r.headers["set-cookie"].lower()
+    assert "httponly" in cookie and "samesite=lax" in cookie and "max-age" not in cookie  # ends with the browser
+    remembered = anonymous.post("/api/auth/login", json={**test_user, "remember": True})
+    assert "max-age=" in remembered.headers["set-cookie"].lower()
+
+
+def test_logout_ends_the_session(anonymous, test_user):
+    assert anonymous.post("/api/auth/login", json=test_user).status_code == 200
+    assert anonymous.get("/api/auth/me").status_code == 200
+    token = anonymous.cookies.get("sp_session")
+    assert anonymous.post("/api/auth/logout").status_code == 204
+    assert token and anonymous.get("/api/auth/me").status_code == 401
+    # a copy of the old cookie no longer works either
+    assert anonymous.get("/api/auth/me", headers={"Cookie": f"sp_session={token}"}).status_code == 401
+
+
+def test_too_many_wrong_passwords(anonymous):
+    body = {"email": "throttle@example.test", "password": "wrong-password"}
+    codes = [anonymous.post("/api/auth/login", json=body).status_code for _ in range(11)]
+    assert codes[:10] == [401] * 10 and codes[10] == 429
+
+
+def test_scenario_records_its_author(client):
+    r = client.post("/api/scenarios", json={"name": "pytest author", "intake": {}})
+    assert r.status_code == 201, r.text
+    try:
+        assert r.json()["created_by"] == "Pytest User"
+    finally:
+        client.delete(f"/api/scenarios/{r.json()['id']}")

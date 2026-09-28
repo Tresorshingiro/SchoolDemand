@@ -8,6 +8,7 @@ import { printReport, usePrinting } from '../print';
 import SchoolMap from './SchoolMap';
 import SchoolTable from './SchoolTable';
 import SchoolPanel from './SchoolPanel';
+import SchoolSearch from './SchoolSearch';
 import {
   CompareBars, CrowdingByArea, DoubleShiftByArea, GapHistogram, GradeChart, GradeLegend, ShortageByArea, StackedGradesByArea, StatusSplit, dsName,
 } from './Charts';
@@ -32,7 +33,7 @@ export function Card({ title, sub, children, className = '', aside }: {
   );
 }
 
-/** Heading that opens a part of the page (what schools have, where classrooms are short). */
+/** Heading that opens a part of the page (what schools have, classrooms shortage). */
 export function SectionTitle({ title, sub }: { title: string; sub?: string }) {
   return (
     <div className="print-keep-next flex flex-wrap items-baseline gap-x-3 gap-y-0.5 pt-4">
@@ -197,6 +198,17 @@ export default function Overview({
     [],
   );
   const closePanel = useCallback(() => setSelected(null), []);
+  // A school found with the search box: show it on the map and in the table (switching to a level it offers and
+  // dropping an area filter it is outside of), and open its details.
+  const findSchool = useCallback((code: number, levels: number[]) => {
+    const row = data.schools.find((r) => r.c === code);
+    setFilters((f) => {
+      const level = levels.includes(f.level) ? f.level : levels[0];
+      const inArea = row && (!f.district || row.d === f.district) && (!f.sector || row.s === f.sector);
+      return inArea ? { ...f, level } : { level, district: '', sector: '' };
+    });
+    setSelected(code);
+  }, [data]);
   const pickLevel = (i: number) => {
     setFilters({ level: i, district: '', sector: '' });
     setSelected(null);
@@ -255,6 +267,7 @@ export default function Overview({
               Clear
             </button>
           )}
+          <SchoolSearch schools={data.schools} meta={meta} onPick={findSchool} />
           <div className="ml-auto flex flex-wrap items-center gap-2">
             {controls}
             <button type="button" onClick={() => void printReport(reportFile)}
@@ -309,8 +322,8 @@ export default function Overview({
           </div>
         </Card>
 
-        {/* ---------------------------------------------------------------- where classrooms are short */}
-        <SectionTitle title="Where classrooms are short"
+        {/* ---------------------------------------------------------------- classrooms shortage */}
+        <SectionTitle title="Classrooms shortage"
           sub={`Rooms available against rooms required at ${level.capacity} students per room`} />
 
         {shortageTop?.(codes, filters)}

@@ -13,10 +13,22 @@ class ProjectionRequest(BaseModel):
     intake: Intake | None = Field(None, description="Intake plan; missing districts / grades take the default plan")
 
 
+class LoginIn(BaseModel):
+    email: str = Field(min_length=3, max_length=254)
+    password: str = Field(min_length=1, max_length=1024)
+    remember: bool = Field(False, description="Stay signed in on this browser (remember_days) instead of one session")
+
+
+class UserOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    email: str
+    full_name: str | None
+
+
 class ScenarioIn(BaseModel):
     name: str = Field(min_length=1, max_length=100)
     description: str | None = Field(None, max_length=2000)
-    created_by: str | None = Field(None, max_length=100)
     intake: Intake
 
 

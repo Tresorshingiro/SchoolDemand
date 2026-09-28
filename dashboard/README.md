@@ -11,7 +11,26 @@ npm install
 npm run dev       # http://localhost:5173 — /api is forwarded to the API on http://127.0.0.1:8000 (vite.config.ts)
 ```
 
-Start the API first (see `../backend/README.md`); `API_PROXY_TARGET` points the dev server at another one.
+Start the API first (see `../backend/README.md`); `API_PROXY_TARGET` points the dev server at another one. Create an
+account to sign in with: `python -m app.users create you@example.org` in `backend/`.
+
+## Pages and sign-in
+
+| Address | Page | |
+|---|---|---|
+| `/` | Landing page (`src/site/LandingPage.tsx`) | public |
+| `/login` | Sign-in (`src/site/LoginPage.tsx`) | public; goes back to the page asked for (`?next=`) or `/dashboard` |
+| `/legal/{privacy,terms,disclaimer,accessibility}` | `src/site/LegalPage.tsx` | public |
+| `/dashboard` | The dashboard (`src/App.tsx`) | signed-in users only, loaded after sign-in |
+
+The landing, sign-in and legal pages come from the School Demand & Demographics site designed by the team (their
+styles in `src/site/site.css`, scoped under `.site` so they never touch the dashboard; always light). The landing
+page's maps and chart are illustrations (`src/site/Illustrations.tsx`, tagged "Illustration"): Rwanda's real district
+outlines (`src/site/rwandaMap.ts`, built by `python scripts/build_landing_map.py`) with decorative shading and no
+figures, since the data is only for signed-in users. Routing:
+`react-router-dom` in `src/main.tsx`. Sign-in state: `src/auth.tsx` — the API sets an HttpOnly session cookie, the page
+asks `/api/auth/me`; when the session ends (401) the dashboard returns to the sign-in page. **Sign out** is in the
+dashboard header.
 
 ## Deploy
 
@@ -20,8 +39,9 @@ npm run build     # output in dist/
 ```
 
 Serve `dist/` with `/api` forwarded to the API: nginx in the Docker setup (`nginx.conf`, `Dockerfile`), IIS with
-`../deploy/windows/web.config` on Windows — see `../deploy/README.md`. When the API lives elsewhere, build with
-`VITE_API_URL`. Viewers need internet access to `js.arcgis.com` and `services.arcgisonline.com` for the map.
+`../deploy/windows/web.config` on Windows — see `../deploy/README.md`. Both also send page addresses (`/login`,
+`/dashboard` …) to `index.html`. Under a sub-path build with `VITE_BASE=/school/`; when the API lives elsewhere, build
+with `VITE_API_URL`. Viewers need internet access to `js.arcgis.com` and `services.arcgisonline.com` for the map.
 
 ## Map
 
@@ -36,8 +56,9 @@ Serve `dist/` with `/api` forwarded to the API: nginx in the Docker setup (`ngin
   students, schools in deficit and classrooms short; click to zoom in). From about 1:150,000 every school shows alone,
   sized by students; from about 1:40,000 (zoom 14) a close-up layer draws every school the same large size in its gap
   colour, with names from zoom 15 (GIS team's advice). Esri place names appear from about zoom 13.
-- **District and sector boundaries** (switchable; sector lines from about zoom 9, names when zoomed in). The district /
-  sector picked in the page filters is outlined in amber.
+- **District and sector boundaries** (switchable). Sector lines are faint and dashed; nationally they appear from about
+  zoom 11 (names too), and when a district is picked in the filters only its sectors show, from about zoom 9. The
+  district / sector picked in the page filters is outlined in amber.
 - **Legend panel on the map** (bottom left, collapsible) is also the map's filter: click Deficit / Exact fit / Surplus
   or a class (10+ short … 10+ spare) to hide or show those schools; it holds the Clusters / Schools switch and the
   District / Sector boundary checkboxes. **Find a school** (top left) searches the schools in view.
@@ -47,6 +68,11 @@ Serve `dist/` with `/api` forwarded to the API: nginx in the Docker setup (`ngin
   CC BY 4.0, names matched to the roster).
 
 ## Page
+
+**Search any school** (filter bar, or press `/`): finds a school anywhere in the country by name (words in any order,
+accents ignored) or code, whatever the filters. Picking one switches to a level it offers if needed, drops a district /
+sector filter it is outside of, flies the map to it and opens its details (every level it offers). The map's own
+**Find a school** box searches only the schools shown on the map.
 
 One page (`src/App.tsx` -> `ProjectionPage`): 2026 actual and 2027–2030 projected, picked with the **Year** control
 (the separate "Current 2026" page was removed on 2026-09-26; its 2026 figures are the Year = 2026 view). Every level;
@@ -65,8 +91,8 @@ New students:
 
   The projection is calculated on the server (`POST /api/projection/run`, ≈2 s for a new plan, then cached); the page
   keeps showing the previous result with "Recalculating…" meanwhile. **Saved plans**: the Plan bar above the intake
-  table opens, saves, saves as and deletes plans stored in the database — shared with everyone who uses the
-  dashboard. The browser remembers the plan on screen (and unsaved edits) between visits.
+  table opens, saves, saves as and deletes plans stored in the database — shared with everyone who signs in (each
+  plan records who created it). The browser remembers the plan on screen (and unsaved edits) between visits.
 
   Excel copy of a plan: `python scripts/build_projection_workbook.py --intake intake_plan.csv`.
 

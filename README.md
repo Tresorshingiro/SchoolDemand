@@ -2,7 +2,8 @@
 
 Do Rwanda's schools have enough classrooms, now and as cohorts move up and new children start school? A web
 dashboard (map, charts, school table, PDF report, editable intake plans) on top of a FastAPI backend and a
-PostgreSQL + PostGIS database.
+PostgreSQL + PostGIS database. Visitors see a public landing page; the dashboard needs a sign-in (email and password,
+accounts created by an administrator — see [backend/README.md](backend/README.md#users-and-sign-in)).
 
 ```
  browser ── dashboard (React, Vite) ──/api──▶ FastAPI (backend/app) ──▶ PostgreSQL + PostGIS
@@ -26,6 +27,7 @@ docker compose -f deploy/docker-compose.yml --env-file deploy/.env up -d db   # 
 cd backend
 .venv\Scripts\python -m alembic upgrade head                                 # tables
 .venv\Scripts\python -m etl.load_version2                                    # load data-sources/ (≈30 s)
+.venv\Scripts\python -m app.users create you@example.org --name "Your Name"  # an account to sign in with
 .venv\Scripts\python -m uvicorn app.main:app --reload                        # API on :8000, docs /api/docs
 cd ..\dashboard
 npm install; npm run dev                                                     # http://localhost:5173

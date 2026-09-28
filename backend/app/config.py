@@ -30,6 +30,12 @@ class Settings(BaseSettings):
     cors_origins: str = ""  # comma separated, for a dashboard served from another origin
     projection_cache_size: int = 16  # projection results kept in memory (per intake plan)
 
+    # Sign-in sessions (cookie). Without "Remember me" the cookie ends with the browser and the session after
+    # session_hours; with it, after remember_days. Secure cookie: None = when the request came over HTTPS.
+    session_hours: int = 12
+    remember_days: int = 30
+    session_cookie_secure: bool | None = None
+
     @cached_property
     def url(self) -> str:
         return self.database_url or (

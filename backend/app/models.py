@@ -6,7 +6,7 @@ created yet — there is no data for them.
 Additions to the design: `countries` (the outline the map masks outside of), `catchment_population` (children per
 pre-primary school catchment — the GIS file gives school catchments, not the village x school shares of
 `school_catchments`), and `classrooms.source_classroom_id` (the roster's classroom_id; `mineduc_classroom_id`
-holds test_code, the cleaned room ID).
+holds test_code, the cleaned room ID), `users` / `user_sessions` (sign-in to the dashboard).
 """
 from __future__ import annotations
 
@@ -210,6 +210,31 @@ class ProjectionScenario(Base):
     created_by: Mapped[str | None] = mapped_column(String(100))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+# ---------------------------------------------------------------- users and sign-in
+
+
+class User(Base):
+    """A person who can sign in to the dashboard (accounts are created with python -m app.users)."""
+    __tablename__ = "users"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    email: Mapped[str] = mapped_column(String(254), unique=True, comment="stored in lower case")
+    full_name: Mapped[str | None] = mapped_column(String(100))
+    password_hash: Mapped[str] = mapped_column(String(255), comment="argon2id")
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class UserSession(Base):
+    """A signed-in browser. The cookie holds a random token; only its SHA-256 is stored."""
+    __tablename__ = "user_sessions"
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
 
 class ScenarioIntake(Base):

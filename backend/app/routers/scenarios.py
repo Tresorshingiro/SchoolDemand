@@ -10,9 +10,10 @@ from .. import models as M
 from ..db import get_session
 from ..domain import projection as P
 from ..schemas import Intake, ScenarioIn, ScenarioOut, ScenarioSummary
+from ..services.auth import current_user
 from .common import complete_intake, require_data
 
-router = APIRouter(prefix="/scenarios", tags=["scenarios"])
+router = APIRouter(prefix="/scenarios", tags=["scenarios"], dependencies=[Depends(current_user)])
 
 
 def _intake(session: Session, scenario_id: int) -> Intake:
@@ -63,11 +64,12 @@ def get_scenario(scenario_id: int, session: Session = Depends(get_session)):
 
 
 @router.post("", response_model=ScenarioOut, status_code=201, dependencies=[Depends(require_data)])
-def create_scenario(body: ScenarioIn, session: Session = Depends(get_session)):
+def create_scenario(body: ScenarioIn, session: Session = Depends(get_session), user: M.User = Depends(current_user)):
     intake = complete_intake(body.intake)
     base_year = session.scalar(select(M.AcademicYear.id).where(M.AcademicYear.year == P.BASE_YEAR))
-    s = M.ProjectionScenario(name=body.name.strip(), description=body.description, created_by=body.created_by,
-                             base_year_id=base_year, end_year=P.YEARS[-1])
+    s = M.ProjectionScenario(name=body.name.strip(), description=body.description,
+                             created_by=(user.full_name or user.email)[:100], base_year_id=base_year,
+                             end_year=P.YEARS[-1])
     session.add(s)
     try:
         session.flush()
@@ -83,8 +85,6 @@ def update_scenario(scenario_id: int, body: ScenarioIn, session: Session = Depen
     s = _get(session, scenario_id)
     intake = complete_intake(body.intake)
     s.name, s.description = body.name.strip(), body.description
-    if body.created_by:
-        s.created_by = body.created_by
     try:
         session.flush()
     except IntegrityError:

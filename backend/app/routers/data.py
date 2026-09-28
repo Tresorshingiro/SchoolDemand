@@ -6,10 +6,11 @@ from typing import Literal
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import Response
 
+from ..services.auth import current_user
 from ..services.store import store
 from .common import json_payload, require_data
 
-router = APIRouter(tags=["data"], dependencies=[Depends(require_data)])
+router = APIRouter(tags=["data"], dependencies=[Depends(current_user), Depends(require_data)])
 
 
 @router.get("/meta", summary="Levels, grades, capacity, source, data-quality counts")

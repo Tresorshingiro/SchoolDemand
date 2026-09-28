@@ -211,14 +211,21 @@ function boundaryStyle(mode: Mode, kind: BasemapKind) {
   };
 }
 
-function outlineRenderer(color: number[], width: number) {
-  return new SimpleRenderer({ symbol: new SimpleFillSymbol({ color: [0, 0, 0, 0], outline: { color, width } }) });
+function outlineRenderer(color: number[], width: number, style: 'solid' | 'short-dash' = 'solid') {
+  return new SimpleRenderer({ symbol: new SimpleFillSymbol({ color: [0, 0, 0, 0], outline: { color, width, style } }) });
 }
+
+// Sector lines stay in the background: faint, thin and dashed, so they don't compete with the district lines and
+// the schools.
+const sectorRenderer = (style: ReturnType<typeof boundaryStyle>) => outlineRenderer([...style.line, 0.35], 0.5, 'short-dash');
 
 // District names from about zoom 9 to 11 (at national scale they only fit between clusters here and there);
 // sector names take over closer in.
 const DISTRICT_LABEL_SCALES = { minScale: 1200000, maxScale: 300000 };
 const SECTOR_LABEL_SCALES = { minScale: 300000 };
+// Sector lines: nationally from about zoom 11 (416 sectors crowd the map before that); when a district is picked in
+// the filters, only its sectors, from about zoom 9.
+const SECTOR_MIN_SCALE = { all: 300000, district: 1200000 };
 
 function areaLabels(field: string, size: number, bold: boolean, scales: { minScale?: number; maxScale?: number },
   style: ReturnType<typeof boundaryStyle>) {
@@ -365,8 +372,8 @@ export default function SchoolMap({ rows, mode, selected, onSelect, district = '
     });
     const sectors = new GeoJSONLayer({
       url: `${BOUNDARIES}/sectors`, title: 'Sectors', outFields: ['d', 's'],
-      minScale: 1200000, // from about zoom 9
-      renderer: outlineRenderer([...style.line, 0.45], 0.6),
+      minScale: SECTOR_MIN_SCALE.all, // see the district effect below
+      renderer: sectorRenderer(style),
       labelingInfo: areaLabels('s', 9, false, SECTOR_LABEL_SCALES, style),
     });
     const focus = new GraphicsLayer({ title: 'Selected area', listMode: 'hide' });
@@ -452,7 +459,7 @@ export default function SchoolMap({ rows, mode, selected, onSelect, district = '
         g.symbol = new SimpleFillSymbol({ color: style.mask, outline: { color: [...style.line, 1], width: 2 } });
       });
       b.districts.renderer = outlineRenderer([...style.line, 0.9], 1.5);
-      b.sectors.renderer = outlineRenderer([...style.line, 0.45], 0.6);
+      b.sectors.renderer = sectorRenderer(style);
       b.districts.labelingInfo = areaLabels('d', 9, true, DISTRICT_LABEL_SCALES, style);
       b.sectors.labelingInfo = areaLabels('s', 9, false, SECTOR_LABEL_SCALES, style);
     }
@@ -470,10 +477,13 @@ export default function SchoolMap({ rows, mode, selected, onSelect, district = '
   useEffect(() => {
     const b = bounds.current;
     if (!b || !ready) return;
+    const esc = (v: string) => v.replace(/'/g, "''");
+    // Sector lines: only the picked district's, and from further out (see SECTOR_MIN_SCALE)
+    b.sectors.definitionExpression = district ? `d = '${esc(district)}'` : '';
+    b.sectors.minScale = district ? SECTOR_MIN_SCALE.district : SECTOR_MIN_SCALE.all;
     b.focus.removeAll();
     if (!district) return;
     const layer = sector ? b.sectors : b.districts;
-    const esc = (v: string) => v.replace(/'/g, "''");
     const where = sector ? `d = '${esc(district)}' AND s = '${esc(sector)}'` : `d = '${esc(district)}'`;
     let cancelled = false;
     layer.queryFeatures({ where, returnGeometry: true, outFields: [] }).then(({ features }) => {

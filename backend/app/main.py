@@ -14,7 +14,7 @@ from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 
 from .config import settings
-from .routers import data, projection, scenarios, system
+from .routers import auth, data, projection, scenarios, system
 from .services.store import store
 
 log = logging.getLogger("school_planning")
@@ -41,7 +41,8 @@ app = FastAPI(
 )
 if settings.cors_origins:
     app.add_middleware(CORSMiddleware, allow_origins=[o.strip() for o in settings.cors_origins.split(",") if o.strip()],
-                       allow_methods=["*"], allow_headers=["*"])
+                       allow_methods=["*"], allow_headers=["*"], allow_credentials=True)  # the session cookie
 
-for router in (system.router, data.router, projection.router, scenarios.router):
+# Everything except health, reload (admin token) and sign-in needs a signed-in user (services/auth.py)
+for router in (system.router, auth.router, data.router, projection.router, scenarios.router):
     app.include_router(router, prefix="/api")
