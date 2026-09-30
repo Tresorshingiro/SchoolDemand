@@ -2,8 +2,9 @@
 
 Do Rwanda's schools have enough classrooms, now and as cohorts move up and new children start school? A web
 dashboard (map, charts, school table, PDF report, editable intake plans) on top of a FastAPI backend and a
-PostgreSQL + PostGIS database. Visitors see a public landing page; the dashboard needs a sign-in (email and password,
-accounts created by an administrator — see [backend/README.md](backend/README.md#users-and-sign-in)).
+PostgreSQL + PostGIS database. Visitors see a public landing page; the dashboard needs a sign-in. Admins manage accounts
+and saved plans in the admin portal (`/admin`); viewers see everything and try plans — see
+[backend/README.md](backend/README.md#users-and-sign-in).
 
 ```
  browser ── dashboard (React, Vite) ──/api──▶ FastAPI (backend/app) ──▶ PostgreSQL + PostGIS
@@ -27,7 +28,7 @@ docker compose -f deploy/docker-compose.yml --env-file deploy/.env up -d db   # 
 cd backend
 .venv\Scripts\python -m alembic upgrade head                                 # tables
 .venv\Scripts\python -m etl.load_version2                                    # load data-sources/ (≈30 s)
-.venv\Scripts\python -m app.users create you@example.org --name "Your Name"  # an account to sign in with
+.venv\Scripts\python -m app.users create you@example.org --name "Your Name" --admin  # the first administrator
 .venv\Scripts\python -m uvicorn app.main:app --reload                        # API on :8000, docs /api/docs
 cd ..\dashboard
 npm install; npm run dev                                                     # http://localhost:5173
@@ -44,6 +45,8 @@ Windows setup without Docker (PostgreSQL + PostGIS, the API as a Windows service
 
 ## Update the data
 
-Replace the files in `data-sources/` (same columns), run the import job, then restart the API (or
-`POST /api/admin/reload` with the admin token). Saved intake plans are kept. When the MINEDUC API / NISR village data
-arrive, a new import job loads them into the same tables (`import_runs` records every load).
+Admins upload new files in the admin portal (Data): school data for a school year, the catchment file, or NISR
+district totals. Each file is checked, then published; the history keeps every import and any earlier one can be
+published again. A new school year becomes the base of the projection (the four years after it) and earlier years stay
+as actual history. `python -m etl.load_version2` does the same for the files in `data-sources/`. The MINEDUC API will
+be a connector feeding the same checks once its documentation and access are available.

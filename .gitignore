@@ -19,3 +19,7 @@ output/
 
 # Office lock files and backups
 ~$*
+data-uploads/
+
+
+docs
