@@ -193,7 +193,7 @@ def build_school(ws: Worksheet, s) -> int:
     ws["H4"].comment = Comment("Class groups minus distinct physical rooms across all grades of the level. A room shared "
                                "by two grades counts once here, so this can exceed the sum of the grade rows.", "Analysis")
     ws["K4"].comment = Comment("CEILING(Total Students / capacity) on the school total, so it can be lower than the "
-                               "sum of the per-grade values. Secondary, TVET and TTC (full day): value = SUM over grade x "
+                               "sum of the per-grade values. Secondary, TVET and Professional Education (full day): value = SUM over grade x "
                                "combination of MAX(class groups, CEILING(students / capacity)) — see Read Me.", "Analysis")
     r0 = 5
     for i, row in enumerate(s.itertuples(index=False)):
@@ -412,7 +412,7 @@ def build_readme(ws: Worksheet, roster, g_last: int, s_last: int) -> None:
     ws.column_dimensions["B"].width = 110
     lines: list[tuple[str, str | None, str]] = [
         ("Purpose", "For each school and grade, is the number of classrooms enough to seat every enrolled student at the "
-                    "standard capacity? Covers all levels in the roster: pre-primary, primary, lower and upper secondary, TVET and TTC.", "row"),
+                    "standard capacity? Covers all levels in the roster: pre-primary, primary, lower and upper secondary, TVET and Professional Education.", "row"),
         ("Source", f"{A.SOURCE_XLSX.name} ({len(roster):,} class-group rows, {roster['school_code'].nunique():,} schools). "
                    f"Rules from Data_Transformation_Brief.docx. Built {date.today():%d %B %Y}.", "row"),
         ("", None, "gap"),
@@ -447,7 +447,7 @@ def build_readme(ws: Worksheet, roster, g_last: int, s_last: int) -> None:
                                 "shows the original classroom_id.", "row"),
         ("Schools covered", "Only schools located inside Rwanda (Version 2 of the roster). 291 schools with missing or "
                             "out-of-country coordinates in the first roster are not in this source.", "row"),
-        ("Full-day levels", "Lower and Upper Secondary, TVET and TTC study full day: no double shift. Every class group "
+        ("Full-day levels", "Lower and Upper Secondary, TVET and Professional Education study full day: no double shift. Every class group "
                             "needs its own room and different combinations never share, so Required Classrooms = SUM over "
                             "grade x combination of MAX(class groups, CEILING(students / capacity)). These rows hold the "
                             "value from the script (a capacity change on Settings does not update them). Rooms are counted "

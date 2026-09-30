@@ -222,7 +222,7 @@ def build_grade(ws, g: pd.DataFrame) -> int:
 
 
 def build_combo(ws, c: pd.DataFrame) -> int:
-    title(ws, "Per-Combination Breakdown", "One row per school x grade x combination x year (Upper Secondary, TVET, TTC). "
+    title(ws, "Per-Combination Breakdown", "One row per school x grade x combination x year (Upper Secondary, TVET, Professional Education). "
                                            "A breakdown of the Per-Grade rows; values from projection.py.")
     cols = ["Year", "School Code", "School Name", "District", "Sector", "Level", "Grade", "Combination",
             "Total Students", "Total Classrooms"]
@@ -304,7 +304,7 @@ def build_national(ws, s_last: int, g_last: int, c: pd.DataFrame, c_last: int) -
             rr += 1
     gap_colours(ws, f"I{g_first}:I{rr - 1}")
 
-    # --- students by combination and year (Upper Secondary, TVET, TTC)
+    # --- students by combination and year (Upper Secondary, TVET, Professional Education)
     r = rr + 2
     ws.cell(row=r, column=1, value="Students by combination and year").font = F_SUB
     ws.cell(row=r + 1, column=1, value=(
@@ -405,13 +405,13 @@ def build_readme(ws, label: str, info: pd.DataFrame, summ: pd.DataFrame, s_last:
         (SECTOR, "Sector x level x year.", "row"),
         (SCHOOL, "School x level x year (like brief section 3b).", "row"),
         (GRADE, "School x grade x year (like brief section 3a), with the classrooms assigned to each grade.", "row"),
-        (COMBO, "School x grade x combination x year for Upper Secondary, TVET and TTC (students, class groups).", "row"),
+        (COMBO, "School x grade x combination x year for Upper Secondary, TVET and Professional Education (students, class groups).", "row"),
         (TOP, f"Largest deficits in {P.YEARS[-1]} for each level.", "row"),
         (ENTRANTS, "Where each level's new students come from, by district and year.", "row"),
         ("", None, "gap"),
         ("Method", None, "head"),
-        ("Levels", "Pre-Primary N1-N3, Primary P1-P6, Lower Secondary S1-S3, Upper Secondary S4-S6, TVET L3-L5 and TTC "
-                   "Y1-Y3. TVET L1-L2 (short courses) are not projected.", "row"),
+        ("Levels", "Pre-Primary N1-N3, Primary P1-P6, Lower Secondary S1-S3, Upper Secondary S4-S6, TVET L3-L5 and "
+                   "Professional Education Y1-Y3. TVET L1-L2 (short courses) are not projected.", "row"),
         ("Cohorts move up", "Each year every grade moves up one step with its class groups; the last grade of a level "
                             "leaves it.", "row"),
         ("New N1", "The intake plan: by default every child aged 3 in a pre-primary school's catchment area enters "
@@ -427,7 +427,7 @@ def build_readme(ws, label: str, info: pd.DataFrame, summ: pd.DataFrame, s_last:
         ("Into schools", "A district's new S1 / S4 / L3 / Y1 students are shared to its schools in proportion to each school's "
                          "students in that grade in 2026 (rounded per school) and formed into class groups at the "
                          "school's 2026 average group size for that grade.", "row"),
-        ("Combinations", "Upper Secondary, TVET and TTC grades are also split by combination / trade. Students and "
+        ("Combinations", "Upper Secondary, TVET and Professional Education grades are also split by combination / trade. Students and "
                          "class groups keep their combination as they move up; a school's new S4 / L3 / Y1 are split "
                          "by its 2026 mix in that grade. S4 in 2026 already follows the new streams (Math and Science "
                          "Stream One / Two, Arts and Humanities, Languages), so the old S5-S6 combinations (MEG, HGL "
@@ -440,7 +440,7 @@ def build_readme(ws, label: str, info: pd.DataFrame, summ: pd.DataFrame, s_last:
                                          "whose students need more rooms than they have groups.", "row"),
         ("Measures", "Same as the 2026 analysis: Double Shift = MAX(0, class groups - rooms); Required = "
                      "CEILING(students / capacity); Gap = rooms - required; Classrooms Short = sum of deficits.", "row"),
-        ("Full-day levels", "Lower and Upper Secondary, TVET and TTC study full day: no double shift. Each grade needs, "
+        ("Full-day levels", "Lower and Upper Secondary, TVET and Professional Education study full day: no double shift. Each grade needs, "
                             "per combination, MAX(class groups, CEILING(students / capacity)) rooms; the school's rooms "
                             "are shared between grades in proportion to those needs; Required = the sum of the needs "
                             "(value from projection.py — a capacity change on Settings does not update these rows). "
