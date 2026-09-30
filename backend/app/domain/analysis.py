@@ -25,7 +25,7 @@ group. The original classroom_id is kept for reference.
   Example agreed with the client: P1 with 6 rooms, 3 of them used by two
   groups -> 9 class groups, 3 double shift, 6 available.
 
-* Full-day levels (Lower and Upper Secondary, TVET, TTC) have no double shift:
+* Full-day levels (Lower and Upper Secondary, TVET, Professional Education) have no double shift:
   every class group needs its own room, and different combinations never share.
       Required = SUM over grade x combination of MAX(class groups, CEILING(students / capacity))
   Rooms are counted as recorded, so a class group sharing a room ID with another
@@ -63,14 +63,14 @@ LEVELS = [
     ("LSE", "Lower Secondary",  ["S1", "S2", "S3"],                   45),
     ("USE", "Upper Secondary",  ["S4", "S5", "S6"],                   45),
     ("TVE", "TVET",             ["L1", "L2", "L3", "L4", "L5"],       45),
-    ("TTC", "TTC",              ["Y1", "Y2", "Y3"],                   45),
+    ("TTC", "Professional Education", ["Y1", "Y2", "Y3"],             45),
 ]
 GRADE_TO_LEVEL = {g: label for _, label, grades, _ in LEVELS for g in grades}
 LEVEL_ORDER = [label for _, label, _, _ in LEVELS]
 GRADE_ORDER = [g for _, _, grades, _ in LEVELS for g in grades]
 CAPACITY = {label: cap for _, label, _, cap in LEVELS}
 # Levels that study full day: no double shift, every class group needs its own room (see module docstring)
-FULL_DAY = ["Lower Secondary", "Upper Secondary", "TVET", "TTC"]
+FULL_DAY = ["Lower Secondary", "Upper Secondary", "TVET", "Professional Education"]
 
 # Rwanda bounding box (with a small margin) for coordinate sanity checks.
 RW_LAT = (-2.9, -1.0)

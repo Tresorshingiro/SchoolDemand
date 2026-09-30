@@ -1,12 +1,16 @@
 """Health check and data reload."""
 from __future__ import annotations
 
-from fastapi import APIRouter, Header, HTTPException
+import secrets
+
+from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from fastapi.concurrency import run_in_threadpool
 from sqlalchemy import text
+from sqlalchemy.orm import Session
 
 from ..config import settings
-from ..db import engine
+from ..db import engine, get_session
+from ..services import auth
 from ..services.store import store
 
 router = APIRouter(tags=["system"])
@@ -24,14 +28,18 @@ def health() -> dict:
     return {
         "status": "ok" if db == "ok" and snap else "degraded",
         "database": db,
-        "data": {"import_run": snap.import_run, "class_groups": len(snap.roster)} if snap else None,
+        "data": {"import_run": snap.import_run, "class_groups": len(snap.roster), "years": list(snap.rosters)}
+        if snap else None,
     }
 
 
-@router.post("/admin/reload", summary="Re-read the database after an import (X-Admin-Token header)")
-async def reload(x_admin_token: str = Header("")) -> dict:
-    if not settings.admin_token:
-        raise HTTPException(403, "Reload is disabled: set ADMIN_TOKEN, or restart the API after an import.")
-    if x_admin_token != settings.admin_token:
-        raise HTTPException(401, "Wrong admin token.")
+@router.post("/admin/reload", summary="Re-read the database after an import (signed-in admin, or X-Admin-Token header)")
+async def reload(request: Request, x_admin_token: str = Header(""), session: Session = Depends(get_session)) -> dict:
+    token_ok = bool(settings.admin_token) and secrets.compare_digest(x_admin_token, settings.admin_token)
+    if not token_ok:
+        user = auth.session_user(request, session)
+        if user is None:
+            raise HTTPException(401, "Sign in as an administrator, or send the X-Admin-Token header.")
+        if user.role != "admin" or user.must_change_password:
+            raise HTTPException(403, "Only an administrator can do this.")
     return await run_in_threadpool(store.load)

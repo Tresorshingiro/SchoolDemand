@@ -74,11 +74,15 @@ def current(roster: pd.DataFrame, *, source: str, built: str | None = None) -> d
     return {"school_levels": school_levels, "grades": grades, "meta": meta, "combos": combos_2026(roster)}
 
 
-def projection_config(base: P.Base, catchment: pd.DataFrame) -> dict:
-    """What the dashboard needs to show and edit the projection (the calculation itself runs on the server)."""
+def projection_config(base: P.Base, catchment: pd.DataFrame, horizon: P.Horizon = P.DEFAULT_HORIZON,
+                      population: dict[str, pd.DataFrame] | None = None,
+                      estimated: dict[str, list[int]] | None = None) -> dict:
+    """What the dashboard needs to show and edit the projection (the calculation itself runs on the server).
+    `population` = the default intake plan (P.default_intake), `estimated` = its years not measured."""
+    population = population if population is not None else P.default_intake(catchment, base.info)
     return {
-        "baseYear": P.BASE_YEAR,
-        "years": P.YEARS,
+        "baseYear": horizon.base,
+        "years": horizon.years,
         "levels": [{"level": LEVEL_INDEX[label], "grades": grades, "capacity": P.CAPACITY[label],
                     "fullDay": label in A.FULL_DAY}
                    for label, grades in P.LEVELS],
@@ -87,11 +91,10 @@ def projection_config(base: P.Base, catchment: pd.DataFrame) -> dict:
         "intakes": P.INTAKES,
         "feeds": P.FEEDS,
         "schoolFeeds": P.SCHOOL_FEEDS,
-        "population": {g: {d: [int(v) for v in row] for d, row in t.iterrows()}
-                       for g, t in P.default_intake(catchment, base.info).items()},
-        "estimated": P.ESTIMATED,
-        # children aged 3 in each pre-primary school's catchment (filled as P.fill_catchment): [school, 2027, ... 2030]
-        "catchment": {"years": P.YEARS[1:],
+        "population": {g: {d: [int(v) for v in row] for d, row in t.iterrows()} for g, t in population.items()},
+        "estimated": estimated if estimated is not None else P.ESTIMATED,
+        # children aged 3 in each pre-primary school's catchment (filled as P.fill_catchment): [school, year 1, ... 4]
+        "catchment": {"years": horizon.future,
                       "rows": [[int(code), *(int(v) for v in row)] for code, row in catchment.iterrows()]},
         "defaultLabel": P.DEFAULT_LABEL,
         # combinations of each level (empty = level without combinations), most students first
@@ -99,14 +102,15 @@ def projection_config(base: P.Base, catchment: pd.DataFrame) -> dict:
     }
 
 
-def encode_projection(schools: pd.DataFrame, grades: pd.DataFrame, combos: pd.DataFrame) -> dict:
+def encode_projection(schools: pd.DataFrame, grades: pd.DataFrame, combos: pd.DataFrame,
+                      horizon: P.Horizon = P.DEFAULT_HORIZON) -> dict:
     """One projection run, all years, as rows of numbers (names and coordinates come from the 2026 dataset)."""
     s = schools.assign(l=schools["level"].map(LEVEL_INDEX))
     g = grades.assign(k=grades["grade"].map(GRADE_INDEX))
     names = sorted(combos["combination"].unique())
     c = combos.assign(k=combos["grade"].map(GRADE_INDEX), ni=combos["combination"].map({n: i for i, n in enumerate(names)}))
     return {
-        "years": P.YEARS,
+        "years": horizon.years,
         # [year, school, level index, students, class groups, double shift / no room, rooms, required, gap]
         "schools": s[["year", "school_code", "l", "students", "class_groups", "double_shift", "rooms", "required", "gap"]]
         .to_numpy().tolist(),

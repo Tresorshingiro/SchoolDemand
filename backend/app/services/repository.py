@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import pandas as pd
-from sqlalchemy import select, text
+from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session
 
 from .. import models as M
@@ -32,26 +32,54 @@ def read_roster(session: Session, year: int = P.BASE_YEAR) -> pd.DataFrame:
     return A.prepare_roster(df)
 
 
-def read_catchment(session: Session, roster: pd.DataFrame) -> pd.DataFrame:
-    """Children aged 3 per pre-primary school catchment (school_code x 2027-2030), filled as P.load_catchment does."""
+def read_catchment_population(session: Session) -> pd.DataFrame:
+    """Children aged 3 per pre-primary school catchment as published: school_code x year (NaN when missing)."""
     rows = session.execute(
         select(M.School.mineduc_code, M.CatchmentPopulation.year, M.CatchmentPopulation.population)
         .join(M.School, M.School.id == M.CatchmentPopulation.school_id)
         .where(M.CatchmentPopulation.age == 3)
     ).all()
     pop = pd.DataFrame(rows, columns=["school_code", "year", "population"]).astype({"school_code": "int64"})
-    pop = pop.pivot_table(index="school_code", columns="year", values="population", aggfunc="sum")
+    return pop.pivot_table(index="school_code", columns="year", values="population", aggfunc="sum").astype(float)
+
+
+def read_catchment(session: Session, roster: pd.DataFrame, horizon: P.Horizon,
+                   pop: pd.DataFrame | None = None) -> pd.DataFrame:
+    """Children aged 3 per pre-primary school of `roster` for the horizon's projection years (P.fill_catchment)."""
+    pop = read_catchment_population(session) if pop is None else pop
     # every pre-primary school is a catchment school, with or without figures (as in the catchment file)
     pre = roster[roster["level"] == A.LEVEL_ORDER[0]]
     n1 = pre[pre["grade"] == "N1"].groupby("school_code")[A.STUDENTS].sum()
     schools = pd.Index(sorted(pre["school_code"].unique()), name="school_code")
-    return P.fill_catchment(pop.reindex(index=schools, columns=P.YEARS[1:]), n1.reindex(schools))
+    return P.fill_catchment(pop.reindex(index=schools), n1.reindex(schools), horizon)
 
 
-def latest_import(session: Session) -> M.ImportRun | None:
-    return session.scalars(
-        select(M.ImportRun).where(M.ImportRun.status == "success").order_by(M.ImportRun.id.desc()).limit(1)
-    ).first()
+def read_nisr(session: Session) -> pd.DataFrame:
+    """NISR children aged 3 per district: district name x year (empty when no NISR file is published)."""
+    rows = session.execute(
+        select(M.District.name, M.DistrictPopulation.year, M.DistrictPopulation.population)
+        .join(M.District, M.District.id == M.DistrictPopulation.district_id)
+        .where(M.DistrictPopulation.age == 3)
+    ).all()
+    if not rows:
+        return pd.DataFrame()
+    t = pd.DataFrame(rows, columns=["district", "year", "population"])
+    return t.pivot_table(index="district", columns="year", values="population", aggfunc="sum").astype(float)
+
+
+def live_imports(session: Session) -> list[tuple[M.ImportRun, str | None]]:
+    """The live data (one import per kind, per school year for school data) with the name of who published it."""
+    return [(run, name) for run, name in session.execute(
+        select(M.ImportRun, func.coalesce(M.User.full_name, M.User.email))
+        .outerjoin(M.User, M.User.id == M.ImportRun.published_by_id)
+        .where(M.ImportRun.is_live).order_by(M.ImportRun.kind, M.ImportRun.academic_year)
+    ).all()]
+
+
+def school_years(session: Session) -> list[int]:
+    """The published school years, oldest first."""
+    return sorted(session.scalars(select(M.ImportRun.academic_year).where(
+        M.ImportRun.is_live, M.ImportRun.kind == "school_data")).all())
 
 
 def boundaries(session: Session) -> dict[str, dict]:

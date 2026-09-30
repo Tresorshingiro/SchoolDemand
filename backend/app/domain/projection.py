@@ -13,10 +13,13 @@ so planners can type their own intake; keep the two in step.
 Levels projected
 ----------------
 Pre-Primary N1-N3, Primary P1-P6, Lower Secondary S1-S3, Upper Secondary S4-S6,
-TVET L3-L5 and TTC Y1-Y3. TVET L1-L2 (short courses) are left out: their class
+TVET L3-L5 and Professional Education Y1-Y3. TVET L1-L2 (short courses) are left out: their class
 groups, students and rooms are not part of the projection.
 
-New students (year y = 2027 ... 2030)
+The base year is the newest actual school year (2026 today); the projection covers the four years after it
+(Horizon).
+
+New students (year y = base + 1 ... base + 4; 2027 ... 2030 today)
 -------------------------------------
 * N1 = the children aged 3 in y living in each pre-primary school's catchment area
   (Chachement area.xlsx, Pop2027 ... Pop2030: NISR age 3 shared to schools by GIS).
@@ -45,8 +48,8 @@ Inside a level students and class groups move up one grade a year; the last
 grade leaves the level (N3 and P6 and S3 and the final grades leave the school's
 count — P6 and S3 re-enter secondary through the district pools above).
 
-Combinations (Upper Secondary, TVET, TTC)
------------------------------------------
+Combinations (Upper Secondary, TVET, Professional Education)
+------------------------------------------------------------
 Class groups there follow a subject combination or trade (MEG, Math and Science
 Stream Two, SOD, ACC ...). The projection also splits each grade by combination —
 a breakdown only, the grade figures above are unchanged:
@@ -73,7 +76,7 @@ Classrooms (per school and level, every year)
                                     groups; any rooms left over stay spare.
   Shares are whole rooms (largest remainder, ties to the lower grade). Grade Double Shift =
   class groups - rooms assigned; grade Gap = rooms assigned - CEILING(grade students / capacity).
-* Full-day levels (Lower and Upper Secondary, TVET, TTC — analysis.FULL_DAY) have no double
+* Full-day levels (Lower and Upper Secondary, TVET, Professional Education — analysis.FULL_DAY) have no double
   shift: every class group needs its own room and combinations never share.
       rooms needed (grade) = SUM over combinations of MAX(class groups, CEILING(students / capacity))
       Required (school)    = SUM of the grades' rooms needed
@@ -95,7 +98,25 @@ from . import analysis as A
 
 CATCHMENT_XLSX = A.DATA_DIR / "Chachement area.xlsx"  # children aged 3 per pre-primary school catchment, 2027-2030
 BASE_YEAR = 2026
-YEARS = [2026, 2027, 2028, 2029, 2030]
+HORIZON_YEARS = 4  # projected years after the base year
+
+
+@dataclass(frozen=True)
+class Horizon:
+    """The projection's years: the base year (the newest actual school year) and the HORIZON_YEARS after it."""
+    base: int = BASE_YEAR
+
+    @property
+    def years(self) -> list[int]:
+        return list(range(self.base, self.base + HORIZON_YEARS + 1))
+
+    @property
+    def future(self) -> list[int]:
+        return self.years[1:]
+
+
+DEFAULT_HORIZON = Horizon()
+YEARS = DEFAULT_HORIZON.years  # 2026-2030: the Excel scripts and the file-based functions
 
 SHORT_COURSES = {"L1", "L2"}  # TVET short courses, not projected
 # (level label, grades) in display order
@@ -107,7 +128,7 @@ INTAKES = {"N1": 3}  # entry grade -> age of the children who enter it (catchmen
 SCHOOL_FEEDS = [("N3", "P1")]  # leavers -> entry grade next year, in the same school (else pooled by sector)
 FEEDS = [("P6", ["S1"]), ("S3", ["S4", "L3", "Y1"])]  # leavers of a grade -> entry grades next year, per district
 ENTRY = {grades[0] for _, grades in LEVELS}
-COMBO_LEVELS = ["Upper Secondary", "TVET", "TTC"]  # levels whose class groups follow a combination / trade
+COMBO_LEVELS = ["Upper Secondary", "TVET", "Professional Education"]  # levels whose class groups follow a combination / trade
 DEFAULT_LABEL = "Catchment"  # name of the default intake plan
 
 
@@ -136,12 +157,22 @@ def read_catchment() -> tuple[pd.DataFrame, pd.Series]:
     return c[[f"Pop{y}" for y in YEARS[1:]]].set_axis(YEARS[1:], axis=1), c["N1"]
 
 
-def fill_catchment(pop: pd.DataFrame, n1: pd.Series) -> pd.DataFrame:
-    """Children aged 3 in each pre-primary school's catchment: school_code x 2027-2030 (whole numbers).
+def fill_catchment(pop: pd.DataFrame, n1: pd.Series, horizon: Horizon = DEFAULT_HORIZON) -> pd.DataFrame:
+    """Children aged 3 in each pre-primary school's catchment: school_code x horizon.future (whole numbers).
 
-    A missing year takes the school's last known value, its 2026 N1 enrolment when it has none."""
-    t = pd.concat([n1.rename(BASE_YEAR), pop.reindex(columns=YEARS[1:])], axis=1)
-    return t.ffill(axis=1).fillna(0).round().astype(int)[YEARS[1:]]
+    A missing year takes the school's last known value (any earlier year of the data), its N1 enrolment when it has
+    none."""
+    cols = sorted({int(c) for c in pop.columns} | set(horizon.future))
+    t = pd.concat([n1.rename("n1"), pop.reindex(columns=cols)], axis=1)
+    return t.ffill(axis=1).fillna(0).round().astype(int)[horizon.future]
+
+
+def estimated_years(pop: pd.DataFrame, horizon: Horizon = DEFAULT_HORIZON) -> list[int]:
+    """Projection years without a measured catchment figure: missing from the data, or identical to the year before
+    (the current catchment file repeats 2029 for 2030)."""
+    cols = {int(c) for c in pop.columns}
+    return [y for y in horizon.future
+            if y not in cols or (y - 1 in cols and pop[y].equals(pop[y - 1]))]
 
 
 def load_catchment() -> pd.DataFrame:
@@ -149,10 +180,17 @@ def load_catchment() -> pd.DataFrame:
     return fill_catchment(*read_catchment())
 
 
-def default_intake(catchment: pd.DataFrame, info: pd.DataFrame) -> dict[str, pd.DataFrame]:
-    """Default intake plan: {"N1": district x year} = the district totals of the school catchments."""
+def default_intake(catchment: pd.DataFrame, info: pd.DataFrame, nisr: pd.DataFrame | None = None
+                   ) -> dict[str, pd.DataFrame]:
+    """Default intake plan: {"N1": district x year}. The NISR district totals when there are any (a year after the
+    file's last year repeats it), else the district totals of the school catchments."""
     district = info.set_index("school_code")["district"]
-    return {"N1": catchment.groupby(district.reindex(catchment.index).to_numpy()).sum()}
+    t = catchment.groupby(district.reindex(catchment.index).to_numpy()).sum()
+    if nisr is not None and not nisr.empty:
+        cols = sorted({int(c) for c in nisr.columns} | set(t.columns))
+        n = nisr.reindex(columns=cols).ffill(axis=1).reindex(index=t.index, columns=t.columns)
+        t = n.fillna(t).round().astype(int)
+    return {"N1": t}
 
 
 def load_population() -> dict[str, pd.DataFrame]:
@@ -246,10 +284,10 @@ def share_by_need(rooms: np.ndarray, need: np.ndarray) -> np.ndarray:
 
 # ---------------------------------------------------------------- projection
 def project(roster: pd.DataFrame, intake: dict[str, pd.DataFrame] | None = None, *,
-            catchment: pd.DataFrame | None = None, base: Base | None = None,
+            catchment: pd.DataFrame | None = None, base: Base | None = None, horizon: Horizon = DEFAULT_HORIZON,
             ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """Run the projection. `intake` = {"N1": district x year}; default: the catchment totals (default_intake).
-    `catchment` (school_code x year, see fill_catchment) and `base` (base_schools) default to the files / the
+    `catchment` (school_code x horizon.future, see fill_catchment), `horizon` the base year and projection years and `base` (base_schools) default to the files / the
     roster; the API passes them in, prepared once from the database.
 
     Returns (info, schools, grades, combos):
@@ -257,7 +295,7 @@ def project(roster: pd.DataFrame, intake: dict[str, pd.DataFrame] | None = None,
     schools one row per school x level x year: students, class_groups, rooms, double_shift, required, gap
     grades  one row per school x level x year x grade: the same, with the rooms assigned to the grade
     combos  one row per school x grade x combination x year with students or class groups
-            (Upper Secondary, TVET, TTC): students, class_groups"""
+            (Upper Secondary, TVET, Professional Education): students, class_groups"""
     b = base if base is not None else base_schools(roster)
     catchment = catchment if catchment is not None else load_catchment()
     intake = {**default_intake(catchment, b.info), **(intake or {})}
@@ -298,8 +336,8 @@ def project(roster: pd.DataFrame, intake: dict[str, pd.DataFrame] | None = None,
     c_groups = {k: v.copy() for k, v in b.combo_groups.items()}
     level_grades = dict(LEVELS)
     school_frames, grade_frames, combo_frames = [], [], []
-    for year in YEARS:
-        if year > BASE_YEAR:
+    for year in horizon.years:
+        if year > horizon.base:
             prev_s, prev_g = students, groups
             students, groups = np.zeros_like(prev_s), np.zeros_like(prev_g)
             for _, grades in LEVELS:
@@ -307,7 +345,7 @@ def project(roster: pd.DataFrame, intake: dict[str, pd.DataFrame] | None = None,
                     students[:, gi[grades[k]]] = prev_s[:, gi[grades[k - 1]]]
                     groups[:, gi[grades[k]]] = prev_g[:, gi[grades[k - 1]]]
             new = {}
-            yi = YEARS.index(year) - 1
+            yi = horizon.years.index(year) - 1
             for g in INTAKES:
                 table = intake[g]
                 plan = district.map(table[year]).fillna(0).to_numpy() if year in table.columns else np.zeros(n)

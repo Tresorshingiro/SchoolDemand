@@ -4,7 +4,6 @@ from __future__ import annotations
 from fastapi import HTTPException, Request
 from fastapi.responses import Response
 
-from ..domain import projection as P
 from ..schemas import Intake
 from ..services.store import Payload, store
 
@@ -24,8 +23,10 @@ def require_data() -> None:
 
 def complete_intake(intake: Intake | None) -> Intake:
     """Validate a plan and fill what it leaves out from the default plan (every district, every year)."""
-    defaults: Intake = store.snapshot.default_intake
-    n_years = len(P.YEARS) - 1
+    snap = store.snapshot
+    defaults: Intake = snap.default_intake
+    years = snap.horizon.future
+    n_years = len(years)
     out: Intake = {g: {d: list(v) for d, v in t.items()} for g, t in defaults.items()}
     for grade, table in (intake or {}).items():
         if grade not in defaults:
@@ -34,6 +35,6 @@ def complete_intake(intake: Intake | None) -> Intake:
             if district not in defaults[grade]:
                 raise HTTPException(422, f"Unknown district {district!r}.")
             if len(values) != n_years or any((not isinstance(v, int)) or v < 0 for v in values):
-                raise HTTPException(422, f"{grade} / {district}: expected {n_years} whole numbers >= 0 ({P.YEARS[1]}-{P.YEARS[-1]}).")
+                raise HTTPException(422, f"{grade} / {district}: expected {n_years} whole numbers >= 0 ({years[0]}-{years[-1]}).")
             out[grade][district] = list(values)
     return out

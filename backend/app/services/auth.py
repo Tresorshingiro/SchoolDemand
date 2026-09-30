@@ -113,16 +113,45 @@ def clear_cookie(response) -> None:
     response.delete_cookie(COOKIE, path="/")
 
 
-def current_user(request: Request, session: Session = Depends(get_session)) -> M.User:
-    """FastAPI dependency: the signed-in user, or 401."""
+def end_user_sessions(session: Session, user_id: int, keep_token: str | None = None) -> None:
+    """Sign a user out everywhere (except the browser holding `keep_token`)."""
+    q = delete(M.UserSession).where(M.UserSession.user_id == user_id)
+    if keep_token:
+        q = q.where(M.UserSession.token_hash != _token_hash(keep_token))
+    session.execute(q)
+
+
+def session_user(request: Request, session: Session) -> M.User | None:
+    """The active user of the request's session cookie, or None."""
     token = request.cookies.get(COOKIE)
-    user = None
-    if token:
-        user = session.scalar(
-            select(M.User).join(M.UserSession, M.UserSession.user_id == M.User.id)
-            .where(M.UserSession.token_hash == _token_hash(token), M.UserSession.expires_at > func.now(),
-                   M.User.is_active)
-        )
+    if not token:
+        return None
+    return session.scalar(
+        select(M.User).join(M.UserSession, M.UserSession.user_id == M.User.id)
+        .where(M.UserSession.token_hash == _token_hash(token), M.UserSession.expires_at > func.now(), M.User.is_active)
+    )
+
+
+def signed_in_user(request: Request, session: Session = Depends(get_session)) -> M.User:
+    """FastAPI dependency: the signed-in user, or 401 — even one who must still change their password."""
+    user = session_user(request, session)
     if user is None:
         raise HTTPException(401, "Please sign in.")
+    return user
+
+
+PASSWORD_CHANGE_REQUIRED = "password_change_required"  # the dashboard recognises this detail
+
+
+def current_user(user: M.User = Depends(signed_in_user)) -> M.User:
+    """FastAPI dependency: the signed-in user; 403 until a temporary password has been changed."""
+    if user.must_change_password:
+        raise HTTPException(403, PASSWORD_CHANGE_REQUIRED)
+    return user
+
+
+def require_admin(user: M.User = Depends(current_user)) -> M.User:
+    """FastAPI dependency: the signed-in administrator; 403 for viewers."""
+    if user.role != "admin":
+        raise HTTPException(403, "Only an administrator can do this.")
     return user

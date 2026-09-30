@@ -6,7 +6,8 @@ created yet — there is no data for them.
 Additions to the design: `countries` (the outline the map masks outside of), `catchment_population` (children per
 pre-primary school catchment — the GIS file gives school catchments, not the village x school shares of
 `school_catchments`), and `classrooms.source_classroom_id` (the roster's classroom_id; `mineduc_classroom_id`
-holds test_code, the cleaned room ID), `users` / `user_sessions` (sign-in to the dashboard).
+holds test_code, the cleaned room ID), `users` / `user_sessions` (sign-in to the dashboard, admin / viewer roles), `audit_log` (who changed what), `district_population` (NISR district totals), `classrooms.academic_year_id` (rooms per
+school year).
 """
 from __future__ import annotations
 
@@ -14,7 +15,8 @@ from datetime import datetime
 
 from geoalchemy2 import Geometry
 from sqlalchemy import (
-    BigInteger, Boolean, DateTime, ForeignKey, Index, Integer, Numeric, SmallInteger, String, Text, UniqueConstraint, func,
+    BigInteger, Boolean, CheckConstraint, DateTime, ForeignKey, Index, Integer, Numeric, SmallInteger, String, Text,
+    UniqueConstraint, false, func, text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
@@ -113,11 +115,13 @@ class School(Base):
 
 
 class Classroom(Base):
-    """One row per physical room."""
+    """One row per physical room and school year."""
     __tablename__ = "classrooms"
-    __table_args__ = (UniqueConstraint("school_id", "mineduc_classroom_id"),)
+    __table_args__ = (UniqueConstraint("academic_year_id", "school_id", "mineduc_classroom_id",
+                                       name="uq_classrooms_year_school_room"),)
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     school_id: Mapped[int] = mapped_column(ForeignKey("schools.id"), index=True)
+    academic_year_id: Mapped[int] = mapped_column(ForeignKey("academic_years.id"), comment="rooms belong to a school year")
     mineduc_classroom_id: Mapped[str] = mapped_column(String(64), comment="test_code: cleaned room ID")
     source_classroom_id: Mapped[str | None] = mapped_column(String(64), comment="classroom_id as recorded in the roster")
     name: Mapped[str | None] = mapped_column(String(200))
@@ -155,6 +159,18 @@ class CatchmentPopulation(Base):
     import_run_id: Mapped[int | None] = mapped_column(ForeignKey("import_runs.id"))
 
 
+class DistrictPopulation(Base):
+    """Children of an age per district and year (NISR): the default N1 plan's district totals."""
+    __tablename__ = "district_population"
+    __table_args__ = (UniqueConstraint("district_id", "year", "age"),)
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    district_id: Mapped[int] = mapped_column(ForeignKey("districts.id"))
+    year: Mapped[int] = mapped_column(SmallInteger)
+    age: Mapped[int] = mapped_column(SmallInteger)
+    population: Mapped[int] = mapped_column(Integer)
+    import_run_id: Mapped[int | None] = mapped_column(ForeignKey("import_runs.id"))
+
+
 # ---------------------------------------------------------------- ingestion and quality
 
 
@@ -167,14 +183,30 @@ class DataSource(Base):
 
 
 class ImportRun(Base):
+    """One upload (or command-line load) of a data file: its check report and whether it is the live data."""
     __tablename__ = "import_runs"
+    __table_args__ = (Index("ux_import_runs_live", "kind", text("COALESCE(academic_year, 0)"), unique=True,
+                            postgresql_where=text("is_live")),)
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
     source_id: Mapped[int] = mapped_column(ForeignKey("data_sources.id"))
+    kind: Mapped[str] = mapped_column(String(20), default="school_data", server_default="school_data",
+                                      comment="school_data, catchment, nisr_population")
+    academic_year: Mapped[int | None] = mapped_column(SmallInteger, comment="school data: the school year of the file")
     endpoint: Mapped[str | None] = mapped_column(String(200), comment="API endpoint or file name")
+    file_name: Mapped[str | None] = mapped_column(String(255))
+    file_sha256: Mapped[str | None] = mapped_column(String(64))
+    file_size: Mapped[int | None] = mapped_column(BigInteger)
     academic_year_id: Mapped[int | None] = mapped_column(ForeignKey("academic_years.id"))
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    status: Mapped[str] = mapped_column(String(10), default="running", comment="running, success, partial, failed")
+    status: Mapped[str] = mapped_column(String(12), default="uploaded", comment=(
+        "uploaded, checking, ready, failed, publishing, published, superseded, discarded, withdrawing, withdrawn"))
+    progress: Mapped[int] = mapped_column(SmallInteger, default=0, server_default="0")
+    report = mapped_column(JSONB, nullable=True)
+    is_live: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
+    uploaded_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    published_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     rows_received: Mapped[int | None] = mapped_column(Integer)
     rows_loaded: Mapped[int | None] = mapped_column(Integer)
     params = mapped_column(JSONB, nullable=True)
@@ -216,13 +248,17 @@ class ProjectionScenario(Base):
 
 
 class User(Base):
-    """A person who can sign in to the dashboard (accounts are created with python -m app.users)."""
+    """A person who can sign in to the dashboard. Admins manage accounts and saved plans; viewers only read."""
     __tablename__ = "users"
+    __table_args__ = (CheckConstraint("role IN ('admin', 'viewer')", name="ck_users_role"),)
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     email: Mapped[str] = mapped_column(String(254), unique=True, comment="stored in lower case")
     full_name: Mapped[str | None] = mapped_column(String(100))
     password_hash: Mapped[str] = mapped_column(String(255), comment="argon2id")
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    role: Mapped[str] = mapped_column(String(10), default="viewer", server_default="viewer", comment="admin or viewer")
+    must_change_password: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
+    created_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
@@ -235,6 +271,18 @@ class UserSession(Base):
     token_hash: Mapped[str] = mapped_column(String(64), unique=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class AuditLog(Base):
+    """Who changed what: accounts, saved plans (and, later, the data)."""
+    __tablename__ = "audit_log"
+    __table_args__ = (Index("ix_audit_log_at", text("at DESC")),)
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    action: Mapped[str] = mapped_column(String(40), comment="user.create, user.role, scenario.delete ...")
+    target: Mapped[str] = mapped_column(String(200), comment="e.g. the user's email or the plan name")
+    detail = mapped_column(JSONB, nullable=True)
 
 
 class ScenarioIntake(Base):

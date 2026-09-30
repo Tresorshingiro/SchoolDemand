@@ -23,12 +23,14 @@ class Settings(BaseSettings):
     postgres_user: str = "school"
     postgres_password: str = "change-me"
     postgres_db: str = "school_planning"
-    db_host: str = "localhost"
+    db_host: str = "127.0.0.1"  # not "localhost": on Windows it tries IPv6 first and Docker's port is IPv4 only (≈2 min)
     db_port: int = 5433
 
     admin_token: str = ""  # X-Admin-Token for POST /api/admin/reload; empty = disabled
     cors_origins: str = ""  # comma separated, for a dashboard served from another origin
     projection_cache_size: int = 16  # projection results kept in memory (per intake plan)
+    # Uploaded data files, their check results and parsed rows (kept: they are the history and the way back)
+    upload_dir: str | None = None
 
     # Sign-in sessions (cookie). Without "Remember me" the cookie ends with the browser and the session after
     # session_hours; with it, after remember_days. Secure cookie: None = when the request came over HTTPS.
@@ -42,6 +44,10 @@ class Settings(BaseSettings):
             f"postgresql+psycopg://{self.postgres_user}:{self.postgres_password}"
             f"@{self.db_host}:{self.db_port}/{self.postgres_db}"
         )
+
+    @cached_property
+    def upload_path(self) -> Path:
+        return Path(self.upload_dir) if self.upload_dir else BACKEND.parent / "data-uploads"
 
 
 settings = Settings()

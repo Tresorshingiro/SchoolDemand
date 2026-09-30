@@ -37,23 +37,32 @@ class Payload:
 @dataclass
 class Snapshot:
     """Everything loaded from one state of the database."""
-    roster: pd.DataFrame
+    rosters: dict[int, pd.DataFrame]  # every published school year
+    horizon: P.Horizon                # base = the newest school year
     base: P.Base
     catchment: pd.DataFrame
-    payloads: dict[str, Payload]  # meta, school-levels, grades, combos, projection-config, boundaries/*
-    default_intake: dict[str, dict[str, list[int]]]  # the default plan: {"N1": {district: [2027 ...]}}
-    import_run: dict
+    payloads: dict[str, Payload]      # meta/<y>, school-levels/<y>, grades/<y>, combos/<y>, projection-config, boundaries/*
+    default_intake: dict[str, dict[str, list[int]]]  # the default plan: {"N1": {district: [year 1 ... 4]}}
+    import_run: list[dict]            # the live imports (sources)
     loaded_at: float
+
+    @property
+    def roster(self) -> pd.DataFrame:
+        return self.rosters[self.horizon.base]
 
 
 def plan_key(intake: dict[str, dict[str, list[int]]] | None) -> str:
     return hashlib.sha1(json.dumps(intake or {}, sort_keys=True).encode()).hexdigest()
 
 
-def intake_frames(intake: dict[str, dict[str, list[int]]]) -> dict[str, pd.DataFrame]:
-    """{"N1": {district: [2027, 2028, ...]}} -> {"N1": district x year DataFrame} for P.project."""
-    years = P.YEARS[1:]
-    return {g: pd.DataFrame({d: v for d, v in t.items()}, index=years).T for g, t in intake.items() if t}
+def intake_frames(intake: dict[str, dict[str, list[int]]], horizon: P.Horizon) -> dict[str, pd.DataFrame]:
+    """{"N1": {district: [year 1, ...]}} -> {"N1": district x year DataFrame} for P.project."""
+    return {g: pd.DataFrame({d: v for d, v in t.items()}, index=horizon.future).T for g, t in intake.items() if t}
+
+
+def _source(run, name: str | None) -> dict:
+    return {"kind": run.kind, "year": run.academic_year, "file": run.file_name or run.endpoint,
+            "publishedAt": run.published_at.isoformat() if run.published_at else None, "publishedBy": name}
 
 
 class Store:
@@ -76,35 +85,54 @@ class Store:
         """(Re)read the database. The previous data keeps being served until the new one is ready."""
         t0 = time.time()
         with SessionLocal() as session:
-            run = R.latest_import(session)
-            if run is None:
-                raise RuntimeError("The database has no successful import yet: run python -m etl.load_version2")
-            roster = R.read_roster(session)
-            catchment = R.read_catchment(session, roster)
+            live = R.live_imports(session)
+            school = {run.academic_year: run for run, _ in live if run.kind == "school_data"}
+            if not school:
+                raise RuntimeError("No published school data yet: run python -m etl.load_version2, "
+                                   "or upload it in the admin portal.")
+            years = sorted(school)
+            horizon = P.Horizon(years[-1])
+            rosters = {y: R.read_roster(session, y) for y in years}
+            pop = R.read_catchment_population(session)
+            catchment = R.read_catchment(session, rosters[horizon.base], horizon, pop)
+            nisr = R.read_nisr(session)
             shapes = R.boundaries(session)
-            import_run = {"id": run.id, "source": run.endpoint, "finished": run.finished_at.isoformat() if run.finished_at else None}
-        base = P.base_schools(roster)
-        data = D.current(roster, source=run.endpoint or "database",
-                         built=run.finished_at.date().isoformat() if run.finished_at else None)
-        config = D.projection_config(base, catchment)
-        payloads = {
-            "meta": Payload.of(data["meta"]),
-            "school-levels": Payload.of(data["school_levels"]),
-            "grades": Payload.of(data["grades"]),
-            "combos": Payload.of(data["combos"]),
-            "projection-config": Payload.of(config),
-            **{f"boundaries/{k}": Payload.of(v) for k, v in shapes.items()},
-        }
-        snap = Snapshot(roster, base, catchment, payloads, config["population"], import_run, time.time())
+            sources = [_source(run, name) for run, name in live]
+        base = P.base_schools(rosters[horizon.base])
+        population = P.default_intake(catchment, base.info, nisr)
+        measured = set() if nisr.empty else {int(c) for c in nisr.columns}
+        estimated = {"N1": [y for y in P.estimated_years(pop, horizon) if y not in measured]}
+        config = D.projection_config(base, catchment, horizon, population, estimated)
+        payloads = {"projection-config": Payload.of(config),
+                    **{f"boundaries/{k}": Payload.of(v) for k, v in shapes.items()}}
+        for y, roster in rosters.items():
+            run = school[y]
+            when = run.published_at or run.finished_at
+            data = D.current(roster, source=run.file_name or run.endpoint or "database",
+                             built=when.date().isoformat() if when else None)
+            meta = {**data["meta"], "actualYears": years, "baseYear": horizon.base,
+                    "projectionYears": horizon.future, "sources": sources}
+            payloads.update({f"meta/{y}": Payload.of(meta), f"school-levels/{y}": Payload.of(data["school_levels"]),
+                             f"grades/{y}": Payload.of(data["grades"]), f"combos/{y}": Payload.of(data["combos"])})
+        snap = Snapshot(rosters, horizon, base, catchment, payloads, config["population"], sources, time.time())
         default = self._compute(snap, None)
         with self._lock:
             self._snap = snap
             self._runs.clear()
             self._runs[plan_key(None)] = default
-        return {"import_run": import_run, "class_groups": len(roster), "seconds": round(time.time() - t0, 1)}
+        return {"import_run": sources, "class_groups": len(snap.roster), "years": years,
+                "seconds": round(time.time() - t0, 1)}
 
     def payload(self, name: str) -> Payload:
         return self.snapshot.payloads[name]
+
+    def year_payload(self, name: str, year: int | None) -> Payload:
+        """A per-year payload (meta, school-levels, grades, combos) of a published school year (default: the base)."""
+        snap = self.snapshot
+        y = year or snap.horizon.base
+        if y not in snap.rosters:
+            raise KeyError(f"No data for {y}: the school years are {', '.join(str(k) for k in snap.rosters)}.")
+        return snap.payloads[f"{name}/{y}"]
 
     def projection(self, intake: dict[str, dict[str, list[int]]] | None) -> Payload:
         """The projection for an intake plan (None = the default catchment plan), cached."""
@@ -124,9 +152,9 @@ class Store:
 
     @staticmethod
     def _compute(snap: Snapshot, intake: dict[str, dict[str, list[int]]] | None) -> Payload:
-        _, schools, grades, combos = P.project(snap.roster, intake_frames(intake) if intake else None,
-                                               catchment=snap.catchment, base=snap.base)
-        return Payload.of(D.encode_projection(schools, grades, combos))
+        _, schools, grades, combos = P.project(snap.roster, intake_frames(intake or snap.default_intake, snap.horizon),
+                                               catchment=snap.catchment, base=snap.base, horizon=snap.horizon)
+        return Payload.of(D.encode_projection(schools, grades, combos, snap.horizon))
 
 
 store = Store()

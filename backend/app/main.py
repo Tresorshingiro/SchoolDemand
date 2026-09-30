@@ -14,7 +14,7 @@ from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 
 from .config import settings
-from .routers import auth, data, projection, scenarios, system
+from .routers import admin, auth, data, data_admin, projection, scenarios, system
 from .services.store import store
 
 log = logging.getLogger("school_planning")
@@ -22,6 +22,13 @@ log = logging.getLogger("school_planning")
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
+    from .imports.service import mark_interrupted  # noqa: PLC0415 — needs the database, like the store
+    try:
+        n = await run_in_threadpool(mark_interrupted)
+        if n:
+            log.warning("%d interrupted import(s) marked failed", n)
+    except Exception as e:  # noqa: BLE001
+        log.warning("could not check for interrupted imports: %s", e)
     try:
         result = await run_in_threadpool(store.load)
         log.warning("data loaded: %s", result)
@@ -43,6 +50,8 @@ if settings.cors_origins:
     app.add_middleware(CORSMiddleware, allow_origins=[o.strip() for o in settings.cors_origins.split(",") if o.strip()],
                        allow_methods=["*"], allow_headers=["*"], allow_credentials=True)  # the session cookie
 
-# Everything except health, reload (admin token) and sign-in needs a signed-in user (services/auth.py)
-for router in (system.router, auth.router, data.router, projection.router, scenarios.router):
+# Everything except health, reload (admin token) and sign-in needs a signed-in user; /admin/* an administrator
+# (services/auth.py)
+for router in (system.router, auth.router, data.router, projection.router, scenarios.router, admin.router,
+               data_admin.router):
     app.include_router(router, prefix="/api")

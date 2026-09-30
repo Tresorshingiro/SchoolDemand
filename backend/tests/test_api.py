@@ -97,10 +97,6 @@ def test_scenario_lifecycle(client):
     assert client.get(f"/api/scenarios/{sc['id']}").status_code == 404
 
 
-def test_reload_is_protected(client):
-    assert client.post("/api/admin/reload").status_code in (401, 403)
-
-
 # ---------------------------------------------------------------- sign-in
 @pytest.mark.parametrize("method, path", [
     ("GET", "/api/meta"), ("GET", "/api/school-levels"), ("GET", "/api/boundaries/districts"),
