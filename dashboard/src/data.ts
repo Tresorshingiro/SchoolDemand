@@ -25,7 +25,7 @@ export interface Level {
   label: string;
   grades: string[];
   capacity: number;
-  /** Full-day level (secondary, TVET, TTC): no double shift — `ds` counts class groups without a room. */
+  /** Full-day level (secondary, TVET, Professional Education): no double shift — `ds` counts class groups without a room. */
   fullDay: boolean;
 }
 
@@ -38,9 +38,21 @@ export interface Meta {
   issues: Record<string, number>;
   schoolIssues: Record<string, [string, number][]>;
   unmapped: number;
+  actualYears: number[]; // published school years, oldest first
+  baseYear: number; // the newest: the projection starts from it
+  projectionYears: number[]; // the four years after it
+  sources: DataSource[]; // the live data files
 }
 
-/** [school, gradeIndex, combination, students, classGroups] — Upper Secondary, TVET and TTC only. */
+export interface DataSource {
+  kind: 'school_data' | 'catchment' | 'nisr_population';
+  year: number | null;
+  file: string | null;
+  publishedAt: string | null;
+  publishedBy: string | null;
+}
+
+/** [school, gradeIndex, combination, students, classGroups] — Upper Secondary, TVET and Professional Education only. */
 export type ComboRow = [number, number, string, number, number];
 
 export interface Dataset {
@@ -50,13 +62,14 @@ export interface Dataset {
   meta: Meta;
 }
 
-/** The 2026 dataset from the API (backend/app/domain/dashboard.py current). */
-export async function loadDataset(): Promise<Dataset> {
+/** A school year's dataset from the API (default: the newest year; backend/app/domain/dashboard.py current). */
+export async function loadDataset(year?: number): Promise<Dataset> {
+  const q = year ? `?year=${year}` : '';
   const [schools, grades, meta, combos] = await Promise.all([
-    getJson<SchoolLevel[]>('/school-levels'),
-    getJson<GradeRow[]>('/grades'),
-    getJson<Meta>('/meta'),
-    getJson<{ names: string[]; rows: [number, number, number, number, number][] }>('/combos'),
+    getJson<SchoolLevel[]>(`/school-levels${q}`),
+    getJson<GradeRow[]>(`/grades${q}`),
+    getJson<Meta>(`/meta${q}`),
+    getJson<{ names: string[]; rows: [number, number, number, number, number][] }>(`/combos${q}`),
   ]);
   return {
     schools,

@@ -577,12 +577,14 @@ export function DoubleShiftByArea({ data, mode, areaLabel, fullDay = false }: {
 /* ------------------------------------------------------------------ projection trend by year */
 
 export function YearTrend({
-  data, mode, year, baseYear, onPick, fullDay = false,
+  data, mode, year, baseYear, actual, onPick, fullDay = false,
 }: {
   data: YearTotals[];
   mode: Mode;
   year: number;
   baseYear: number;
+  /** Actual years (default: the base year); earlier actual years come before it. */
+  actual?: number[];
   onPick?: (year: string) => void;
   fullDay?: boolean;
 }) {
@@ -600,7 +602,7 @@ export function YearTrend({
         ...tooltipBase(mode),
         formatter: (ps: { dataIndex: number }[]) => {
           const d = data[ps[0].dataIndex];
-          return `<div style="font-weight:600;margin-bottom:4px">${d.year}${d.year === baseYear ? ' (actual)' : ''}</div>` +
+          return `<div style="font-weight:600;margin-bottom:4px">${d.year}${(actual ?? [baseYear]).includes(d.year) ? ' (actual)' : ''}</div>` +
             row(c.deficit, 'Classrooms short', fmt(d.short)) +
             row(c.doubleShift, dsName(fullDay), fmt(d.doubleShift)) +
             (base && d.year !== baseYear
@@ -628,7 +630,7 @@ export function YearTrend({
         },
       ],
     };
-  }, [data, mode, year, baseYear, onPick, fullDay]);
+  }, [data, mode, year, baseYear, actual, onPick, fullDay]);
   return <EChart option={option} height={280} onClick={onPick} label={`Classrooms short and ${dsName(fullDay).toLowerCase()} by year`} />;
 }
 

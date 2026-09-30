@@ -2,14 +2,22 @@ import { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { loadDataset, type Dataset } from './data';
 import { ThemeToggle, useTheme } from './theme';
-import { displayName, useAuth } from './auth';
+import { useAuth } from './auth';
+import UserMenu from './UserMenu';
 import { LogoMark } from './site/SiteChrome';
 import ProjectionPage from './components/ProjectionPage';
 
-/** The dashboard (signed-in users): 2026 actual and 2027–2030 projected, picked with the Year control. */
+/** The span of years the dashboard covers: the first actual school year to the last projected one. */
+const yearSpan = (d: Dataset) =>
+  `${d.meta.actualYears[0]}–${d.meta.projectionYears[d.meta.projectionYears.length - 1]}`;
+
+/**
+ * The dashboard (signed-in users): the actual school years and the four projected years after the newest, picked
+ * with the Year control.
+ */
 export default function App() {
   const { mode } = useTheme();
-  const { user, signOut } = useAuth();
+  const { signOut } = useAuth();
   const navigate = useNavigate();
   const [data, setData] = useState<Dataset | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -19,12 +27,13 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    if (!data) return;
     const previous = document.title;
-    document.title = 'Classroom Sufficiency 2026–2030';
+    document.title = `Classroom Sufficiency ${yearSpan(data)}`;
     return () => {
       document.title = previous;
     };
-  }, []);
+  }, [data]);
 
   // Leave the dashboard first: once the user is cleared, its guard would send the page to the sign-in form instead
   const onSignOut = () => {
@@ -47,23 +56,13 @@ export default function App() {
             <LogoMark size={32} />
           </Link>
           <div className="min-w-0 flex-1">
-            <h1 className="text-base font-semibold text-ink sm:text-lg">Classroom Sufficiency 2026–2030</h1>
+            <h1 className="text-base font-semibold text-ink sm:text-lg">Classroom Sufficiency {yearSpan(data)}</h1>
             <p className="hidden truncate text-xs text-muted sm:block print:block">
               Classrooms available and needed at every level, as cohorts move up and new children start school
             </p>
           </div>
           <ThemeToggle className="grid h-8 w-8 place-items-center rounded-md border border-line text-ink2 hover:text-ink print:hidden" />
-          {user && (
-            <div className="flex items-center gap-3 print:hidden">
-              <span className="hidden max-w-[220px] truncate text-xs text-ink2 sm:inline" title={user.email}>
-                {displayName(user)}
-              </span>
-              <button type="button" onClick={onSignOut}
-                className="h-8 rounded-md border border-line px-2.5 text-xs text-ink2 hover:text-ink">
-                Sign out
-              </button>
-            </div>
-          )}
+          <UserMenu onSignOut={onSignOut} />
         </div>
       </header>
 

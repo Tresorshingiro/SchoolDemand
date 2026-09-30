@@ -45,6 +45,11 @@ export interface ScenarioControls {
   busy: boolean;
   message: string | null;
   defaultLabel: string;
+  /** Admins save, rename and delete shared plans; viewers only open them and try their own numbers. */
+  canEdit: boolean;
+  /** An archived plan picked in the list (made for older years): shown, not loaded; admins can copy it. */
+  archived: ScenarioSummary | null;
+  onCopy: (name: string) => void;
   onOpen: (id: number | null) => void;
   onSave: () => void;
   onSaveAs: (name: string) => void;
@@ -68,39 +73,66 @@ function ScenarioBar({ s }: { s: ScenarioControls }) {
         <label className="flex items-center gap-2 text-ink2">
           Plan
           <select aria-label="Open a saved plan" className="h-8 max-w-[260px] px-2 text-sm font-medium text-ink" disabled={s.busy}
-            value={s.active?.id ?? ''} onChange={(e) => s.onOpen(e.target.value === '' ? null : Number(e.target.value))}>
+            value={s.archived?.id ?? s.active?.id ?? ''}
+            onChange={(e) => s.onOpen(e.target.value === '' ? null : Number(e.target.value))}>
             <option value="">{s.defaultLabel} (default)</option>
-            {s.list.map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}
+            {s.list.filter((x) => !x.archived).map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}
+            {s.list.some((x) => x.archived) && (
+              <optgroup label="Archived (older years)">
+                {s.list.filter((x) => x.archived).map((x) => (
+                  <option key={x.id} value={x.id}>{x.name} ({x.base_year + 1}–{x.base_year + 4})</option>
+                ))}
+              </optgroup>
+            )}
           </select>
         </label>
-        {s.dirty && <span className="text-xs font-medium text-accent">unsaved changes</span>}
-        <button type="button" className={btn} disabled={s.busy || !s.active || !s.dirty} onClick={s.onSave}
-          title={s.active ? `Save the changes to "${s.active.name}"` : 'Open a saved plan to save changes to it'}>
-          Save
-        </button>
-        {naming ? (
-          <span className="flex items-center gap-1">
-            <input autoFocus value={name} maxLength={100} placeholder="Name of the new plan" aria-label="Name of the new plan"
-              onChange={(e) => setName(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') submit();
-                if (e.key === 'Escape') setNaming(false);
-              }}
-              className="h-8 w-56 px-2 text-sm" />
-            <button type="button" className={btn} disabled={s.busy || !name.trim()} onClick={submit}>Save</button>
-            <button type="button" className="px-2 text-sm text-muted hover:text-ink" onClick={() => setNaming(false)}>Cancel</button>
-          </span>
-        ) : (
-          <button type="button" className={btn} disabled={s.busy} onClick={() => setNaming(true)}>Save as new plan…</button>
+        {s.dirty && <span className="text-xs font-medium text-accent">{s.canEdit ? 'unsaved changes' : 'changed (not saved)'}</span>}
+        {s.canEdit && (
+          <>
+            <button type="button" className={btn} disabled={s.busy || !s.active || !s.dirty} onClick={s.onSave}
+              title={s.active ? `Save the changes to "${s.active.name}"` : 'Open a saved plan to save changes to it'}>
+              Save
+            </button>
+            {naming ? (
+              <span className="flex items-center gap-1">
+                <input autoFocus value={name} maxLength={100} placeholder="Name of the new plan" aria-label="Name of the new plan"
+                  onChange={(e) => setName(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') submit();
+                    if (e.key === 'Escape') setNaming(false);
+                  }}
+                  className="h-8 w-56 px-2 text-sm" />
+                <button type="button" className={btn} disabled={s.busy || !name.trim()} onClick={submit}>Save</button>
+                <button type="button" className="px-2 text-sm text-muted hover:text-ink" onClick={() => setNaming(false)}>Cancel</button>
+              </span>
+            ) : (
+              <button type="button" className={btn} disabled={s.busy} onClick={() => setNaming(true)}>Save as new plan…</button>
+            )}
+            {s.active && (
+              <button type="button" className="px-2 text-sm text-[var(--deficit)] hover:underline disabled:opacity-50" disabled={s.busy}
+                onClick={s.onDelete}>
+                Delete
+              </button>
+            )}
+          </>
         )}
-        {s.active && (
-          <button type="button" className="px-2 text-sm text-[var(--deficit)] hover:underline disabled:opacity-50" disabled={s.busy}
-            onClick={s.onDelete}>
-            Delete
-          </button>
-        )}
-        <span className="ml-auto text-xs text-muted">Saved plans are shared with everyone who uses the dashboard.</span>
+        <span className="ml-auto text-xs text-muted">
+          {s.canEdit
+            ? 'Saved plans are shared with everyone who uses the dashboard.'
+            : 'You can try plans; only an administrator can save them.'}
+        </span>
       </div>
+      {s.archived && (
+        <p className="mt-1.5 flex flex-wrap items-center gap-2 text-xs text-ink2" role="status">
+          “{s.archived.name}” was made for {s.archived.base_year + 1}–{s.archived.base_year + 4} and is archived.
+          {s.canEdit ? (
+            <button type="button" className={btn} disabled={s.busy}
+              onClick={() => s.onCopy(`${s.archived!.name} (from ${s.archived!.base_year + 1})`)}>
+              Copy to the current years
+            </button>
+          ) : ' An administrator can copy it to the current years.'}
+        </p>
+      )}
       {s.message && <p className="mt-1.5 text-xs text-ink2" role="status">{s.message}</p>}
     </div>
   );
@@ -185,7 +217,9 @@ export default function IntakePlanner({ base, intake, onChange, grade, baseByDis
             if (f) void upload(f);
             e.target.value = '';
           }} />
-        <span className="ml-auto text-xs text-muted">Press Enter or leave a cell to recalculate. Save the plan to share it.</span>
+        <span className="ml-auto text-xs text-muted">
+          Press Enter or leave a cell to recalculate.{scenarios?.canEdit ? ' Save the plan to share it.' : ''}
+        </span>
       </div>
       {message && <p className="mb-2 text-xs text-ink2" role="status">{message}</p>}
 

@@ -10,6 +10,8 @@ export const API_URL =
   (import.meta.env.VITE_API_URL as string | undefined)?.replace(/\/$/, '') ?? `${import.meta.env.BASE_URL}api`;
 
 export const AUTH_EXPIRED = 'auth:expired';
+/** A temporary password must be changed first (403 password_change_required): auth.tsx sends the user to the form. */
+export const PASSWORD_REQUIRED = 'auth:password-required';
 
 export class ApiError extends Error {
   constructor(message: string, readonly status: number) {
@@ -33,6 +35,10 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
       /* not JSON */
     }
     if (res.status === 401 && !path.startsWith('/auth/')) window.dispatchEvent(new Event(AUTH_EXPIRED));
+    if (res.status === 403 && detail === 'password_change_required') {
+      window.dispatchEvent(new Event(PASSWORD_REQUIRED));
+      detail = 'Please choose a new password first.';
+    }
     throw new ApiError(detail, res.status);
   }
   return (res.status === 204 ? undefined : await res.json()) as T;
@@ -40,7 +46,10 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
 export const getJson = <T,>(path: string) => request<T>(path);
 
-export const sendJson = <T,>(method: 'POST' | 'PUT' | 'DELETE', path: string, body?: unknown) =>
+/** A multipart form (file upload); the browser sets the content type with its boundary. */
+export const sendForm = <T,>(path: string, form: FormData) => request<T>(path, { method: 'POST', body: form });
+
+export const sendJson = <T,>(method: 'POST' | 'PUT' | 'PATCH' | 'DELETE', path: string, body?: unknown) =>
   request<T>(path, {
     method,
     headers: body === undefined ? undefined : { 'Content-Type': 'application/json' },

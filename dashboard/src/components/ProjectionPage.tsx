@@ -1,18 +1,21 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { fmt, type Dataset, type Meta, type SchoolLevel } from '../data';
+import { fmt, loadDataset, totals, type Dataset, type Meta, type SchoolLevel } from '../data';
 import {
-  catchmentDemand, cohortTable, comboTable, createScenario, defaultIntake, deleteScenario, fetchProjection, getScenario, gradeByDistrict,
+  catchmentDemand, cohortTable, comboTable, copyScenario, createScenario, defaultIntake, deleteScenario, fetchProjection, getScenario, gradeByDistrict,
   listScenarios, loadProjectionBase, projectionMeta, sameIntake, updateScenario, yearDataset, yearTotals,
   type Intake, type ProjectionBase, type ProjectedYear, type Scenario, type ScenarioSummary,
 } from '../projection';
 import type { Mode } from '../theme';
+import { isAdmin, useAuth } from '../auth';
 import Overview, { Card } from './Overview';
 import IntakePlanner, { FedEntrants } from './IntakePlanner';
 import { CatchmentDemandChart, CohortChart, CompareBars, YearTrend, type SchoolDemand } from './Charts';
 
 // The plan on screen (with unsaved edits) and the saved scenario it came from, remembered in this browser.
 // v4: plans are shared through the database (scenarios); the browser only remembers where you were.
-const STORAGE_KEY = 'classroom-dashboard-plan-v4';
+// v5: one entry per base year, so a plan for 2027-2030 is not read as 2028-2031 after a new school year is published.
+const STORAGE_KEY = 'classroom-dashboard-plan-v5';
+let storageKey = STORAGE_KEY; // + the base year, set by storedPlan when the projection loads
 
 interface StoredPlan {
   intake: Intake;
@@ -20,11 +23,12 @@ interface StoredPlan {
 }
 
 function storedPlan(base: ProjectionBase): StoredPlan | null {
+  storageKey = `${STORAGE_KEY}-${base.baseYear}`;
   const n = base.years.length - 1;
   const valid = (t: unknown, g: string) =>
     !!t && Object.keys(base.population[g]).every((d) => Array.isArray((t as Record<string, number[]>)[d]) && (t as Record<string, number[]>)[d].length === n);
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
+    const raw = localStorage.getItem(storageKey);
     if (raw) {
       const v = JSON.parse(raw) as StoredPlan;
       if (Object.keys(base.intakes).every((g) => valid(v.intake?.[g], g))) return v;
@@ -37,7 +41,7 @@ function storedPlan(base: ProjectionBase): StoredPlan | null {
 
 function savePlan(v: StoredPlan) {
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(v));
+    localStorage.setItem(storageKey, JSON.stringify(v));
   } catch {
     /* storage unavailable — the plan lasts for this visit only */
   }
@@ -180,14 +184,16 @@ function CatchmentDemandCard({ base, result, meta, year, codes, info, mode, onPi
 }
 
 export default function ProjectionPage({ current, mode }: { current: Dataset; mode: Mode }) {
+  const { user } = useAuth();
   const [base, setBase] = useState<ProjectionBase | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [intake, setIntake] = useState<Intake | null>(null);
-  const [year, setYear] = useState(2030);
+  const [picked, setYear] = useState<number | null>(null); // null = the last projected year
   const [plannerOpen, setPlannerOpen] = useState(true);
   // Saved scenarios (database) and the one on screen
   const [scenarios, setScenarios] = useState<ScenarioSummary[]>([]);
   const [active, setActive] = useState<Scenario | null>(null);
+  const [archived, setArchived] = useState<ScenarioSummary | null>(null); // an older plan picked: shown, not loaded
   const [scenarioBusy, setScenarioBusy] = useState(false);
   const [scenarioMessage, setScenarioMessage] = useState<string | null>(null);
 
@@ -201,7 +207,9 @@ export default function ProjectionPage({ current, mode }: { current: Dataset; mo
         setBase(b);
         const stored = storedPlan(b);
         setIntake(stored?.intake ?? defaultIntake(b));
-        if (stored?.scenarioId != null) getScenario(stored.scenarioId).then(setActive).catch(() => undefined);
+        if (stored?.scenarioId != null) {
+          getScenario(stored.scenarioId).then((s) => (s.archived ? undefined : setActive(s))).catch(() => undefined);
+        }
       })
       .catch((e: unknown) => setError(message(e)));
     refreshScenarios();
@@ -233,7 +241,25 @@ export default function ProjectionPage({ current, mode }: { current: Dataset; mo
     busy: scenarioBusy,
     message: scenarioMessage,
     defaultLabel: base.defaultLabel,
+    canEdit: isAdmin(user),
+    archived,
+    onCopy: (name: string) => runScenario(async () => {
+      if (!archived) return;
+      const s = await copyScenario(archived.id, name);
+      setArchived(null);
+      setActive(s);
+      setIntake(s.intake);
+      savePlan({ intake: s.intake, scenarioId: s.id });
+      setScenarioMessage(`Copied to "${s.name}" for ${base.years[1]}–${base.years[base.years.length - 1]}.`);
+      refreshScenarios();
+    }),
     onOpen: (id: number | null) => runScenario(async () => {
+      const pick = id === null ? null : scenarios.find((x) => x.id === id) ?? null;
+      if (pick?.archived) {
+        setArchived(pick); // older years: not loaded into the planner
+        return;
+      }
+      setArchived(null);
       const s = id === null ? null : await getScenario(id);
       const next = s ? s.intake : defaultIntake(base);
       setActive(s);
@@ -271,6 +297,19 @@ export default function ProjectionPage({ current, mode }: { current: Dataset; mo
     for (const r of current.schools) if (!m.has(r.c)) m.set(r.c, r);
     return m;
   }, [current]);
+  // Earlier actual school years (the projection starts from the newest, `current`)
+  const pastYears = useMemo(() => current.meta.actualYears.filter((y) => y < current.meta.baseYear), [current]);
+  const [history, setHistory] = useState<Map<number, Dataset>>(new Map());
+  useEffect(() => {
+    if (!pastYears.length) return;
+    let cancelled = false;
+    Promise.all(pastYears.map((y) => loadDataset(y).then((d) => [y, d] as const)))
+      .then((pairs) => !cancelled && setHistory(new Map(pairs)))
+      .catch(() => undefined); // the projection still works without the past years
+    return () => {
+      cancelled = true;
+    };
+  }, [pastYears]);
   // The projection runs on the server; the previous result stays on screen while a new plan is calculated
   const [result, setResult] = useState<ProjectedYear[] | null>(null);
   const [computing, setComputing] = useState(false);
@@ -310,8 +349,16 @@ export default function ProjectionPage({ current, mode }: { current: Dataset; mo
     return <div className="grid min-h-[50vh] place-items-center text-sm text-muted">Calculating the projection…</div>;
   }
 
+  const year = picked ?? base.years[base.years.length - 1];
+  const past = year < base.baseYear ? history.get(year) : undefined;
   const py = result.find((r) => r.year === year) ?? result[result.length - 1];
-  const isBase = year === base.baseYear;
+  const isActual = year <= base.baseYear;
+  const shown = past ?? yearDataset(py, meta);
+  const pastTotals = (level: number, codes: Set<number>) =>
+    pastYears.flatMap((y) => {
+      const d = history.get(y);
+      return d ? [{ year: y, ...totals(d.schools.filter((r) => r.l === level && codes.has(r.c))) }] : [];
+    });
   const years = base.years.slice(1);
   // Where the new students of an entry grade come from: a district pool (P6 -> S1) or the same school (N3 -> P1)
   const feedOf = (grade: string) => {
@@ -329,13 +376,13 @@ export default function ProjectionPage({ current, mode }: { current: Dataset; mo
   return (
     <Overview
       key="projection"
-      data={yearDataset(py, meta)}
+      data={shown}
       mode={mode}
       showLevels
-      scopePrefix={`${year}${isBase ? ' actual' : ' projected'} · Intake: ${presetLabel}`}
-      panelContext={`${isBase ? 'Actual' : 'Projected'} ${year} · Intake: ${presetLabel}`}
+      scopePrefix={`${year}${isActual ? ' actual' : ' projected'} · Intake: ${presetLabel}`}
+      panelContext={`${isActual ? 'Actual' : 'Projected'} ${year} · Intake: ${presetLabel}`}
       notes={{
-        available: `${base.baseYear} rooms, no new construction`,
+        available: isActual ? `${year} rooms` : `${base.baseYear} rooms, no new construction`,
         gradeChart: "Each grade's rooms = the school's rooms for the level shared out between its grades that year.",
       }}
       controls={
@@ -351,8 +398,8 @@ export default function ProjectionPage({ current, mode }: { current: Dataset; mo
             Year
             <select aria-label="Year" value={year} className="h-8 px-2 text-sm font-medium text-ink"
               onChange={(e) => setYear(Number(e.target.value))}>
-              {base.years.map((y) => (
-                <option key={y} value={y}>{y}{y === base.baseYear ? ' (actual)' : ''}</option>
+              {[...pastYears, ...base.years].map((y) => (
+                <option key={y} value={y}>{y}{y <= base.baseYear ? ' (actual)' : ''}</option>
               ))}
             </select>
           </label>
@@ -422,12 +469,13 @@ export default function ProjectionPage({ current, mode }: { current: Dataset; mo
       }}
       shortageTop={(codes, filters) => {
         const level = base.levels.find((l) => l.level === filters.level) ?? base.levels[0];
-        const byYear = yearTotals(result, filters.level, codes);
+        const byYear = [...pastTotals(filters.level, codes), ...yearTotals(result, filters.level, codes)];
         return (
           <div className="print-cols-2 grid gap-4 lg:grid-cols-2">
             <Card title="Classrooms short by year" sub="Classrooms to build if no rooms are added. Click a bar to show that year.">
               <div className="px-2 pb-3">
-                <YearTrend data={byYear} mode={mode} year={year} baseYear={base.baseYear} onPick={pickYear} fullDay={level.fullDay} />
+                <YearTrend data={byYear} mode={mode} year={year} baseYear={base.baseYear} actual={[...pastYears, base.baseYear]}
+                  onPick={pickYear} fullDay={level.fullDay} />
               </div>
             </Card>
             <Card title="Rooms available vs required by year"

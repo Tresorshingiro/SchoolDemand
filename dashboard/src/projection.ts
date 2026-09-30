@@ -65,7 +65,7 @@ export interface ProjectedYear {
   year: number;
   schools: SchoolLevel[]; // one row per school x level
   grades: GradeRow[];
-  combos: ComboRow[]; // school x grade x combination (Upper Secondary, TVET, TTC)
+  combos: ComboRow[]; // school x grade x combination (Upper Secondary, TVET, Professional Education)
 }
 
 /** The server's answer: rows of numbers for every year (see backend/app/domain/dashboard.py encode_projection). */
@@ -103,6 +103,8 @@ export interface ScenarioSummary {
   created_by: string | null;
   created_at: string;
   updated_at: string;
+  base_year: number; // the plan's years are the four after it
+  archived: boolean; // made for an older base year: readable, copy it to use it
 }
 
 export interface Scenario extends ScenarioSummary {
@@ -116,6 +118,7 @@ export const createScenario = (name: string, intake: Intake, description?: strin
 export const updateScenario = (id: number, name: string, intake: Intake, description?: string | null) =>
   sendJson<Scenario>('PUT', `/scenarios/${id}`, { name, intake, description: description ?? null });
 export const deleteScenario = (id: number) => sendJson<void>('DELETE', `/scenarios/${id}`);
+export const copyScenario = (id: number, name: string) => sendJson<Scenario>('POST', `/scenarios/${id}/copy`, { name });
 
 /** meta with each level's grades replaced by the projected ones (TVET without L1-L2). */
 export function projectionMeta(base: ProjectionBase, meta: Meta): Meta {

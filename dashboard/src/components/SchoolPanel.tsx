@@ -26,7 +26,7 @@ function GapCell({ gap, mode }: { gap: number; mode: Mode }) {
 export default function SchoolPanel({ code, data, mode, onClose, context }: Props) {
   const levels = useMemo(() => data.schools.filter((r) => r.c === code).sort((a, b) => a.l - b.l), [data, code]);
   const grades = useMemo(() => data.grades.filter((g) => g[0] === code).sort((a, b) => a[1] - b[1]), [data, code]);
-  // Combinations of each grade (Upper Secondary, TVET, TTC), most students first
+  // Combinations of each grade (Upper Secondary, TVET, Professional Education), most students first
   const combos = useMemo(() => {
     const m = new Map<number, [string, number, number][]>();
     for (const [c, gi, name, st, g] of data.combos) {
@@ -152,7 +152,7 @@ export default function SchoolPanel({ code, data, mode, onClose, context }: Prop
             {context
               ? "Avail. = the school's rooms shared out to each grade this year."
               : 'A room shared by two grades counts in each grade, but once in the level total above.'}
-            {hasFullDay && ' Secondary, TVET and TTC study full day: no double shift, so that column counts class groups without a room, and every class group needs its own room (combinations never share).'}
+            {hasFullDay && ' Secondary, TVET and Professional Education study full day: no double shift, so that column counts class groups without a room, and every class group needs its own room (combinations never share).'}
             {combos.size > 0 && (context
               ? ' Boxes: each combination; cohorts keep their combination, new entrants follow the 2026 mix.'
               : ' Boxes: each combination.')}

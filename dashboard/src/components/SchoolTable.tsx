@@ -36,7 +36,7 @@ const SHIFT_OPTIONS: Option[] = [
   { key: 'yes', label: 'With double shift', test: (r) => r.ds > 0 },
   { key: 'no', label: 'No double shift', test: (r) => r.ds === 0 },
 ];
-// Full-day levels (secondary, TVET, TTC): `ds` counts class groups without a room
+// Full-day levels (secondary, TVET, Professional Education): `ds` counts class groups without a room
 const NO_ROOM_OPTIONS: Option[] = [
   { key: 'yes', label: 'Groups without a room', test: (r) => r.ds > 0 },
   { key: 'no', label: 'Every group has a room', test: (r) => r.ds === 0 },

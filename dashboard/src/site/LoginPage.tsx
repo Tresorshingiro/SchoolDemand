@@ -1,8 +1,8 @@
 import { useState, type FormEvent } from 'react';
 import { Link, Navigate, useNavigate, useSearchParams } from 'react-router-dom';
+import { ArrowLeft, Eye, EyeOff, Loader2, Lock, Mail } from 'lucide-react';
 import { safeNext, useAuth } from '../auth';
-import { ThemeToggle } from '../theme';
-import { LogoMark } from './SiteChrome';
+import AuthFrame from './AuthFrame';
 
 export default function LoginPage() {
   const { user, checking, signIn } = useAuth();
@@ -11,6 +11,7 @@ export default function LoginPage() {
   const next = safeNext(params.get('next'));
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [show, setShow] = useState(false);
   const [remember, setRemember] = useState(false);
   const [error, setError] = useState('');
   const [info, setInfo] = useState('');
@@ -38,27 +39,37 @@ export default function LoginPage() {
   }
 
   return (
-    <div className="auth-page">
-      <ThemeToggle className="lp-theme-btn auth-theme-btn" />
-      <form className="login-card" onSubmit={onSubmit} noValidate>
-        <LogoMark size={56} />
-        <h2>School Demand &amp; Demographics</h2>
-        <p className="auth-subtitle">Sign in to access the School Demand &amp; Demographics platform.</p>
+    <AuthFrame>
+      <form className="auth2-form" onSubmit={onSubmit} noValidate>
+        <div className="auth2-head">
+          <h1>Welcome back</h1>
+          <p>Sign in to your account to open the dashboard.</p>
+        </div>
 
-        <label>
-          Email
-          <input type="email" name="email" autoComplete="email" placeholder="Email" value={email}
-            onChange={(e) => setEmail(e.target.value)} disabled={loading} autoFocus />
+        <label className="auth2-field">
+          <span>Email</span>
+          <span className="auth2-input">
+            <Mail size={16} aria-hidden />
+            <input type="email" name="email" autoComplete="email" placeholder="you@mineduc.gov.rw" value={email}
+              onChange={(e) => setEmail(e.target.value)} disabled={loading} autoFocus />
+          </span>
         </label>
 
-        <label>
-          Password
-          <input type="password" name="password" autoComplete="current-password" placeholder="Password"
-            value={password} onChange={(e) => setPassword(e.target.value)} disabled={loading} />
+        <label className="auth2-field">
+          <span>Password</span>
+          <span className="auth2-input">
+            <Lock size={16} aria-hidden />
+            <input type={show ? 'text' : 'password'} name="password" autoComplete="current-password" placeholder="Your password"
+              value={password} onChange={(e) => setPassword(e.target.value)} disabled={loading} />
+            <button type="button" className="auth2-eye" onClick={() => setShow((s) => !s)}
+              aria-label={show ? 'Hide the password' : 'Show the password'} title={show ? 'Hide' : 'Show'}>
+              {show ? <EyeOff size={16} /> : <Eye size={16} />}
+            </button>
+          </span>
         </label>
 
-        <div className="auth-row">
-          <label className="auth-remember">
+        <div className="auth2-row">
+          <label className="auth2-check">
             <input type="checkbox" checked={remember} onChange={(e) => setRemember(e.target.checked)} disabled={loading} />
             Remember me
           </label>
@@ -68,17 +79,17 @@ export default function LoginPage() {
           </button>
         </div>
 
-        {error ? <p className="auth-error" role="alert">{error}</p> : null}
-        {info ? <p className="auth-subtitle" role="status">{info}</p> : null}
+        {error ? <p className="auth2-alert auth2-alert-error" role="alert">{error}</p> : null}
+        {info ? <p className="auth2-alert auth2-alert-info" role="status">{info}</p> : null}
 
-        <button type="submit" className="btn btn-cosmic login-btn" disabled={loading}>
-          {loading ? 'Signing in...' : 'Sign in'}
+        <button type="submit" className="auth2-submit" disabled={loading}>
+          {loading ? <><Loader2 size={16} className="auth2-spin" aria-hidden /> Signing in…</> : 'Sign in'}
         </button>
 
-        <p className="auth-back">
-          <Link to="/">Back to landing page</Link>
+        <p className="auth2-foot">
+          <Link to="/"><ArrowLeft size={14} aria-hidden /> Back to the home page</Link>
         </p>
       </form>
-    </div>
+    </AuthFrame>
   );
 }

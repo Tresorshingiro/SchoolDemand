@@ -521,7 +521,7 @@ export default function SchoolMap({ rows, mode, selected, onSelect, district = '
     if (!map || !ready) return;
     const url = URL.createObjectURL(new Blob([JSON.stringify(toGeoJSON(rows))], { type: 'application/json' }));
     // On imagery a white ring keeps every class readable against fields, forest and roofs.
-    const outline = kind === 'satellite' ? { color: '#ffffff', width: 1 } : { color: COLORS[mode].surface, width: 0.75 };
+    const outline = kind === 'satellite' ? { color: '#ffffff', width: 1.25 } : { color: COLORS[mode].surface, width: 1 };
     const visible = BREAKS.filter((b) => !hidden.has(b.label));
     const common = {
       url,
@@ -538,7 +538,8 @@ export default function SchoolMap({ rows, mode, selected, onSelect, district = '
       maxScale: NEAR_SCALE,
       renderer: makeRenderer('gap', dotMode, outline, {
         type: 'size', field: 'st',
-        stops: [{ value: 50, size: 4 }, { value: 1000, size: 7 }, { value: 4000, size: 13 }],
+        // Small schools stay easy to see and click (a 4 px dot was mostly its white ring on imagery)
+        stops: [{ value: 50, size: 8 }, { value: 1000, size: 12 }, { value: 4000, size: 18 }],
       } as __esri.SizeVariableProperties),
       featureReduction: clustered ? makeClusters(dotMode) : null,
     });

@@ -3,14 +3,16 @@ import { createRoot } from 'react-dom/client';
 import { BrowserRouter, Navigate, Outlet, Route, Routes, useLocation } from 'react-router-dom';
 import './index.css';
 import './site/site.css';
-import { AuthProvider, RequireAuth } from './auth';
+import { AuthProvider, RequireAdmin, RequireAuth } from './auth';
 import { ThemeProvider } from './theme';
 import LandingPage from './site/LandingPage';
 import LoginPage from './site/LoginPage';
 import LegalPage from './site/LegalPage';
+import ChangePasswordPage from './site/ChangePasswordPage';
 
 // The dashboard (map, charts) loads only after sign-in, so the landing page stays light
 const Dashboard = lazy(() => import('./App'));
+const Admin = lazy(() => import('./admin/AdminApp'));
 
 /** Public pages share the site layout (site.css), in the dashboard's theme. */
 function SitePages() {
@@ -70,6 +72,7 @@ createRoot(document.getElementById('root')!).render(
               <Route path="/" element={<LandingPage />} />
               <Route path="/login" element={<LoginPage />} />
               <Route path="/legal/:page" element={<LegalPage />} />
+              <Route path="/account/password" element={<RequireAuth><ChangePasswordPage /></RequireAuth>} />
             </Route>
             <Route path="/dashboard" element={
               <RequireAuth>
@@ -78,6 +81,17 @@ createRoot(document.getElementById('root')!).render(
                     <Dashboard />
                   </Suspense>
                 </DashboardBoundary>
+              </RequireAuth>
+            } />
+            <Route path="/admin/*" element={
+              <RequireAuth>
+                <RequireAdmin>
+                  <DashboardBoundary>
+                    <Suspense fallback={loading}>
+                      <Admin />
+                    </Suspense>
+                  </DashboardBoundary>
+                </RequireAdmin>
               </RequireAuth>
             } />
             <Route path="*" element={<Navigate to="/" replace />} />
