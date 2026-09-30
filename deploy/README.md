@@ -10,13 +10,18 @@ cp deploy/.env.example deploy/.env          # set POSTGRES_PASSWORD, ADMIN_TOKEN
 docker compose -f deploy/docker-compose.yml --env-file deploy/.env up -d --build
 docker compose -f deploy/docker-compose.yml --env-file deploy/.env run --rm api python -m etl.load_version2
 docker compose -f deploy/docker-compose.yml --env-file deploy/.env restart api
-docker compose -f deploy/docker-compose.yml --env-file deploy/.env exec api python -m app.users create you@example.org --name "Your Name"
+docker compose -f deploy/docker-compose.yml --env-file deploy/.env exec api python -m app.users create you@example.org --name "Your Name" --admin
 ```
+
+Existing installations: after updating, every account is a viewer — promote the administrator with
+`docker compose -f deploy/docker-compose.yml --env-file deploy/.env exec api python -m app.users role you@example.org admin`
+(Windows service: `python -m app.users role …` from the backend folder).
 
 Open `http://SERVER:8080` and sign in with that account (more accounts: see [backend/README.md](../backend/README.md#users-and-sign-in)). Three containers: `db` (PostgreSQL 17 + PostGIS, data in the `pgdata` volume), `api`
 (FastAPI; runs the migrations on start), `web` (nginx: the dashboard, `/api` forwarded to the API). The import reads
-the files in `data-sources/` (mounted read-only). Back up with
-`docker compose … exec db pg_dump -U school school_planning > backup.sql`.
+the files in `data-sources/` (mounted read-only); files uploaded in the admin portal are kept in the `uploads` volume
+(the import history and the way back to an earlier file). Back up with
+`docker compose … exec db pg_dump -U school school_planning > backup.sql`, and the `uploads` volume with the database.
 
 ## B. Windows server without Docker (IIS)
 
@@ -33,10 +38,11 @@ the files in `data-sources/` (mounted read-only). Back up with
    cd backend
    python -m venv .venv
    .venv\Scripts\python -m pip install -r requirements.txt
-   copy .env.example .env        # DATABASE_URL=postgresql+psycopg://school:…@localhost:5432/school_planning
+   copy .env.example .env        # DATABASE_URL=postgresql+psycopg://school:…@127.0.0.1:5432/school_planning
+                                 # UPLOAD_DIR=D:\school-planning\uploads (a folder the service can write; back it up)
    .venv\Scripts\python -m alembic upgrade head
    .venv\Scripts\python -m etl.load_version2
-   .venv\Scripts\python -m app.users create you@example.org --name "Your Name"     # first account (asks a password)
+   .venv\Scripts\python -m app.users create you@example.org --name "Your Name" --admin   # first administrator (asks a password)
    ..\deploy\windows\install-api-service.ps1 -Nssm C:\tools\nssm\win64\nssm.exe   # as Administrator
    ```
    The API then runs as the Windows service *SchoolPlanningAPI* on `127.0.0.1:8000` (logs in `backend\logs`).
@@ -64,6 +70,6 @@ Restart the API (`docker compose … restart api`, or restart the *SchoolPlannin
 - [ ] Change the database password and set an `ADMIN_TOKEN` (long random string).
 - [ ] Put the site behind HTTPS (IIS certificate or a reverse proxy in front of nginx).
 - [ ] Only the web port is open to users; the database (5432/5433) and the API port (8000) stay internal.
-- [ ] Create an account for each user (`python -m app.users create …`); nobody can see the data without one. Every
-      signed-in user can save and delete the shared plans.
+- [ ] Create an account for each user (admin portal → Users, or `python -m app.users create …`); nobody can see the
+      data without one. Only admins can save and delete the shared plans; viewers can try plans.
 - [ ] Schedule a database backup.

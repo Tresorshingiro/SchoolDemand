@@ -39,8 +39,10 @@ services:
       SCHOOL_DATA_DIR: /data
       ADMIN_TOKEN: ${ADMIN_TOKEN:-}
       CORS_ORIGINS: ${CORS_ORIGINS:-}
+      UPLOAD_DIR: /uploads
     volumes:
       - ../data-sources:/data:ro   # source files for the import job (Version 2.xlsx, catchments, boundaries)
+      - uploads:/uploads           # files uploaded in the admin portal (the import history and the way back)
     expose:
       - "8000"
 
@@ -54,3 +56,4 @@ services:
 
 volumes:
   pgdata:
+  uploads:
