@@ -6,7 +6,7 @@ otherwise the Windows setup.
 ## A. Docker Compose (Linux or Windows server with Docker)
 
 ```bash
-cp deploy/.env.example deploy/.env          # set POSTGRES_PASSWORD, ADMIN_TOKEN; WEB_PORT if 8080 is taken
+cp deploy/.env.example deploy/.env          # set POSTGRES_PASSWORD, ADMIN_TOKEN; WEB_PORT if 5173 is taken
 docker compose -f deploy/docker-compose.yml --env-file deploy/.env up -d --build
 docker compose -f deploy/docker-compose.yml --env-file deploy/.env run --rm api python -m etl.load_version2
 docker compose -f deploy/docker-compose.yml --env-file deploy/.env restart api
@@ -17,7 +17,7 @@ Existing installations: after updating, every account is a viewer — promote th
 `docker compose -f deploy/docker-compose.yml --env-file deploy/.env exec api python -m app.users role you@example.org admin`
 (Windows service: `python -m app.users role …` from the backend folder).
 
-Open `http://SERVER:8080` and sign in with that account (more accounts: see [backend/README.md](../backend/README.md#users-and-sign-in)). Three containers: `db` (PostgreSQL 17 + PostGIS, data in the `pgdata` volume), `api`
+Open `http://SERVER:5173/school-demand/` and sign in with that account (more accounts: see [backend/README.md](../backend/README.md#users-and-sign-in)). Three containers: `db` (PostgreSQL 17 + PostGIS, data in the `pgdata` volume), `api`
 (FastAPI; runs the migrations on start), `web` (nginx: the dashboard, `/api` forwarded to the API). The import reads
 the files in `data-sources/` (mounted read-only); files uploaded in the admin portal are kept in the `uploads` volume
 (the import history and the way back to an earlier file). Back up with
@@ -46,14 +46,15 @@ the files in `data-sources/` (mounted read-only); files uploaded in the admin po
    ..\deploy\windows\install-api-service.ps1 -Nssm C:\tools\nssm\win64\nssm.exe   # as Administrator
    ```
    The API then runs as the Windows service *SchoolPlanningAPI* on `127.0.0.1:8000` (logs in `backend\logs`).
-3. **Dashboard** — build it once (on any PC with Node 20+): `cd dashboard; npm ci; npm run build`. In IIS, create a
-   site whose folder holds `dashboard\dist\*` plus `deploy\windows\web.config`. Install the IIS modules
+3. **Dashboard** — build it once (on any PC with Node 20+): `cd dashboard; npm ci; npm run build`. It is built for
+   the sub-path `/school-demand/`, so in IIS create an application named `school-demand` whose folder holds
+   `dashboard\dist\*` plus `deploy\windows\web.config`. Install the IIS modules
    *URL Rewrite* and *Application Request Routing*, and tick **Enable proxy** in ARR → Server Proxy Settings; the
    `web.config` then forwards `/api` to the service and sends the page addresses (`/login`, `/dashboard` …) to
    `index.html`.
 
-If the site lives under a sub-path (an IIS application such as `https://server/school/`), build it with that path:
-`$env:VITE_BASE='/school/'; npm run build` — the pages and the API (`/school/api`) then work under it. If the API is on
+For another sub-path (such as `https://server/school/`), or the root of the site, build with that path:
+`$env:VITE_BASE='/school/'; npm run build` (or `'/'`) — the pages and the API (`/school/api`) then work under it. If the API is on
 another host, build with `VITE_API_URL` (e.g. `https://api-server/api`) and set `CORS_ORIGINS` for the API; the sign-in
 cookie then needs both on the same site (same domain).
 

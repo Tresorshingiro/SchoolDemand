@@ -31,7 +31,7 @@ cd backend
 .venv\Scripts\python -m app.users create you@example.org --name "Your Name" --admin  # the first administrator
 .venv\Scripts\python -m uvicorn app.main:app --reload                        # API on :8000, docs /api/docs
 cd ..\dashboard
-npm install; npm run dev                                                     # http://localhost:5173
+npm install; npm run dev                                                     # http://localhost:5173/school-demand/
 ```
 
 First time: `copy deploy\.env.example deploy\.env` (set a password) and create the Python environment — see

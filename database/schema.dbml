@@ -174,6 +174,7 @@ Table school_level_offerings {
 Table classrooms {
   id int [pk, increment]
   school_id int [not null, ref: > schools.id]
+  academic_year_id smallint [not null, ref: > academic_years.id, note: 'rooms belong to a school year']
   mineduc_classroom_id varchar(64) [not null, note: 'physical room ID (test_code in Version 2.xlsx)']
   source_classroom_id varchar(64) [note: 'classroom_id as recorded in the roster (before the 3+ groups split)']
   name varchar(100)
@@ -184,9 +185,9 @@ Table classrooms {
   import_run_id bigint [ref: > import_runs.id]
 
   indexes {
-    (school_id, mineduc_classroom_id) [unique]
+    (academic_year_id, school_id, mineduc_classroom_id) [unique]
   }
-  Note: 'One row per PHYSICAL room. Rooms available = count of active usable rooms.'
+  Note: 'One row per PHYSICAL room and school year. Rooms available = count of active usable rooms.'
 }
 
 Table class_groups {
@@ -331,15 +332,40 @@ Table data_sources {
 Table import_runs {
   id bigint [pk, increment]
   source_id smallint [not null, ref: > data_sources.id]
+  kind varchar(20) [not null, note: 'school_data, catchment, nisr_population']
+  academic_year smallint [note: 'school data: the school year of the file']
   endpoint varchar(200) [note: 'API endpoint or file name']
+  file_name varchar(255)
+  file_sha256 varchar(64)
+  file_size bigint
   academic_year_id smallint [ref: > academic_years.id]
   started_at timestamptz [not null, default: `now()`]
   finished_at timestamptz
-  status import_status [not null, default: 'running']
+  status varchar(12) [not null, note: 'uploaded, checking, ready, failed, publishing, published, superseded, discarded, withdrawing, withdrawn']
+  progress smallint [not null, default: 0]
+  report jsonb [note: 'the check: errors, warnings, changes']
+  is_live boolean [not null, default: false, note: 'one live import per kind (and school year)']
+  uploaded_by_id int [ref: > users.id]
+  published_by_id int [ref: > users.id]
+  published_at timestamptz
   rows_received int
   rows_loaded int
   params jsonb
   error text
+}
+
+Table district_population {
+  id bigint [pk, increment]
+  district_id smallint [not null, ref: > districts.id]
+  year smallint [not null]
+  age smallint [not null]
+  population int [not null]
+  import_run_id bigint [ref: > import_runs.id]
+
+  indexes {
+    (district_id, year, age) [unique]
+  }
+  Note: 'Built today: NISR children of an age per district (the default N1 plan totals)'
 }
 
 Table data_quality_issues {
@@ -353,6 +379,39 @@ Table data_quality_issues {
   detail text
   is_resolved boolean [not null, default: false]
   created_at timestamptz [not null, default: `now()`]
+}
+
+// =====================================================================
+// Users and sign-in (built: backend/app/models.py)
+// =====================================================================
+Table users {
+  id int [pk, increment]
+  email varchar(254) [unique, not null, note: 'lower case']
+  full_name varchar(100)
+  password_hash varchar(255) [not null, note: 'argon2id']
+  is_active boolean [not null, default: true]
+  role varchar(10) [not null, default: 'viewer', note: 'admin or viewer']
+  must_change_password boolean [not null, default: false, note: 'temporary password set by an admin']
+  created_by_id int [ref: > users.id]
+  created_at timestamptz [not null, default: `now()`]
+  last_login_at timestamptz
+}
+
+Table user_sessions {
+  id bigint [pk, increment]
+  user_id int [not null, ref: > users.id]
+  token_hash varchar(64) [unique, not null, note: 'SHA-256 of the cookie token']
+  created_at timestamptz [not null, default: `now()`]
+  expires_at timestamptz [not null]
+}
+
+Table audit_log {
+  id bigint [pk, increment]
+  at timestamptz [not null, default: `now()`]
+  user_id int [ref: > users.id, note: 'who did it']
+  action varchar(40) [not null, note: 'user.create, user.role, scenario.delete ...']
+  target varchar(200) [not null]
+  detail jsonb
 }
 
 // =====================================================================
@@ -504,6 +563,7 @@ TableGroup mineduc_teachers {
 
 TableGroup nisr_demand {
   catchment_population
+  district_population
   population_estimates
   school_catchments
 }
@@ -523,4 +583,10 @@ TableGroup projections {
   projection_runs
   projection_grade_results
   projection_school_results
+}
+
+TableGroup access {
+  users
+  user_sessions
+  audit_log
 }
