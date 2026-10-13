@@ -12,7 +12,7 @@ const PAGES: Record<string, { title: string; paragraphs: string[] }> = {
   privacy: {
     title: 'Privacy',
     paragraphs: [
-      'Accounts are created by an administrator. Signing in uses your email address and a password; the password is stored only as a one-way hash, never in readable form.',
+      'The dashboard is open to everyone without an account. Only administrators sign in, to manage data and accounts. Accounts are created by an administrator. Signing in uses your email address and a password; the password is stored only as a one-way hash, never in readable form.',
       'After you sign in, a session cookie keeps you signed in: until you close the browser, or for up to 30 days when you tick "Remember me". Signing out ends the session. The platform records when you last signed in and the name on intake plans you save.',
       'The map loads basemap tiles from ArcGIS / OpenStreetMap services, which see the map area requested but not your account.',
     ],

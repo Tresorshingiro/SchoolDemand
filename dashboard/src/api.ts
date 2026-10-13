@@ -22,7 +22,12 @@ export class ApiError extends Error {
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   let res: Response;
   try {
-    res = await fetch(`${API_URL}${path}`, { credentials: 'include', ...init });
+    // X-Requested-With: the API refuses changes without it (backend/app/services/auth.py, csrf_refused)
+    res = await fetch(`${API_URL}${path}`, {
+      credentials: 'include',
+      ...init,
+      headers: { 'X-Requested-With': 'fetch', ...init?.headers },
+    });
   } catch {
     throw new ApiError('The server could not be reached. Check that the API is running.', 0);
   }

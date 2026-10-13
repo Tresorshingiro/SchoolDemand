@@ -43,7 +43,7 @@ export default function LoginPage() {
       <form className="auth2-form" onSubmit={onSubmit} noValidate>
         <div className="auth2-head">
           <h1>Welcome back</h1>
-          <p>Sign in to your account to open the dashboard.</p>
+          <p>Administrators: sign in to manage the data and the accounts.</p>
         </div>
 
         <label className="auth2-field">

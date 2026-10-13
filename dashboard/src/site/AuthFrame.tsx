@@ -24,7 +24,7 @@ export default function AuthFrame({ children }: { children: ReactNode }) {
           <span>School Demand &amp; Demographics</span>
         </Link>
         <div className="auth2-copy">
-          <h2>Plan classrooms where the children will be.</h2>
+          <h2>School Demand &amp; Demographics</h2>
           <p>Enrolment, rooms and population in one place, for every school in Rwanda.</p>
           <ul className="auth2-points">
             {POINTS.map((p) => (

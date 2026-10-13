@@ -12,12 +12,12 @@ const yearSpan = (d: Dataset) =>
   `${d.meta.actualYears[0]}–${d.meta.projectionYears[d.meta.projectionYears.length - 1]}`;
 
 /**
- * The dashboard (signed-in users): the actual school years and the four projected years after the newest, picked
- * with the Year control.
+ * The dashboard (public; a signed-in admin also gets the user menu): the actual school years and the four projected
+ * years after the newest, picked with the Year control.
  */
 export default function App() {
   const { mode } = useTheme();
-  const { signOut } = useAuth();
+  const { user, signOut } = useAuth();
   const navigate = useNavigate();
   const [data, setData] = useState<Dataset | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -35,7 +35,6 @@ export default function App() {
     };
   }, [data]);
 
-  // Leave the dashboard first: once the user is cleared, its guard would send the page to the sign-in form instead
   const onSignOut = () => {
     navigate('/', { replace: true });
     void signOut();
@@ -62,7 +61,7 @@ export default function App() {
             </p>
           </div>
           <ThemeToggle className="grid h-8 w-8 place-items-center rounded-md border border-line text-ink2 hover:text-ink print:hidden" />
-          <UserMenu onSignOut={onSignOut} />
+          {user ? <UserMenu onSignOut={onSignOut} /> : null}
         </div>
       </header>
 

@@ -347,7 +347,7 @@ export default function SchoolMap({ rows, mode, selected, onSelect, district = '
     for (const r of rows) if (r.x !== null) n.set(breakOf(r.gap).label, (n.get(breakOf(r.gap).label) ?? 0) + 1);
     return n;
   }, [rows]);
-  const [legendOpen, setLegendOpen] = useState(true);
+  const [legendOpen, setLegendOpen] = useState(false); // closed at first: the map is seen whole; a click opens it
   const statusCount = useMemo(() => {
     const n = { Deficit: 0, 'Exact fit': 0, Surplus: 0 };
     for (const r of rows) if (r.x !== null) n[r.gap < 0 ? 'Deficit' : r.gap === 0 ? 'Exact fit' : 'Surplus'] += 1;

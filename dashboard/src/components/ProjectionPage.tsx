@@ -188,7 +188,7 @@ export default function ProjectionPage({ current, mode }: { current: Dataset; mo
   const [base, setBase] = useState<ProjectionBase | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [intake, setIntake] = useState<Intake | null>(null);
-  const [picked, setYear] = useState<number | null>(null); // null = the last projected year
+  const [picked, setYear] = useState<number | null>(null); // null = the actual (newest published) year
   const [plannerOpen, setPlannerOpen] = useState(true);
   // Saved scenarios (database) and the one on screen
   const [scenarios, setScenarios] = useState<ScenarioSummary[]>([]);
@@ -349,7 +349,7 @@ export default function ProjectionPage({ current, mode }: { current: Dataset; mo
     return <div className="grid min-h-[50vh] place-items-center text-sm text-muted">Calculating the projection…</div>;
   }
 
-  const year = picked ?? base.years[base.years.length - 1];
+  const year = picked ?? base.baseYear;
   const past = year < base.baseYear ? history.get(year) : undefined;
   const py = result.find((r) => r.year === year) ?? result[result.length - 1];
   const isActual = year <= base.baseYear;
