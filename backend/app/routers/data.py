@@ -6,11 +6,11 @@ from typing import Literal
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import Response
 
-from ..services.auth import current_user
 from ..services.store import store
 from .common import json_payload, require_data
 
-router = APIRouter(tags=["data"], dependencies=[Depends(current_user), Depends(require_data)])
+# Public: the dashboard is open to everyone (only the admin portal needs a sign-in)
+router = APIRouter(tags=["data"], dependencies=[Depends(require_data)])
 YEAR = "a published school year (default: the newest)"
 
 

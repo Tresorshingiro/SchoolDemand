@@ -102,7 +102,17 @@ def end_session(session: Session, token: str | None) -> None:
         session.commit()
 
 
+def _embed_cookie(value: str, max_age: int | None) -> str:
+    """The cookie for a dashboard inside another site's iframe. Written by hand: Starlette writes Partitioned only on
+    Python 3.14+."""
+    age = [] if max_age is None else [f"Max-Age={max_age}"]
+    return "; ".join([f"{COOKIE}={value}", *age, "Path=/", "HttpOnly", "Secure", "SameSite=None", "Partitioned"])
+
+
 def set_cookie(request: Request, response, token: str, max_age: int | None) -> None:
+    if settings.session_cookie_embed:
+        response.headers.append("set-cookie", _embed_cookie(token, max_age))
+        return
     secure = settings.session_cookie_secure
     if secure is None:
         secure = request.url.scheme == "https"
@@ -110,7 +120,22 @@ def set_cookie(request: Request, response, token: str, max_age: int | None) -> N
 
 
 def clear_cookie(response) -> None:
+    if settings.session_cookie_embed:
+        response.headers.append("set-cookie", _embed_cookie('""', 0))
+        return
     response.delete_cookie(COOKIE, path="/")
+
+
+# Requests that change something must come from the dashboard's own code (api.ts sends this header). A form or a
+# script on another site cannot add it to a request that carries the session cookie, so a cookie sent from other
+# sites (session_cookie_embed) cannot be used to act on someone's behalf.
+CSRF_HEADER = "X-Requested-With"
+SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
+
+
+def csrf_refused(request: Request) -> bool:
+    return (request.method not in SAFE_METHODS and COOKIE in request.cookies
+            and request.headers.get(CSRF_HEADER) != "fetch")
 
 
 def end_user_sessions(session: Session, user_id: int, keep_token: str | None = None) -> None:

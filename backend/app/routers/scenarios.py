@@ -15,11 +15,12 @@ from ..db import get_session
 from ..domain import projection as P
 from ..schemas import Intake, ScenarioCopyIn, ScenarioIn, ScenarioOut, ScenarioSummary
 from ..services.audit import audit
-from ..services.auth import current_user, require_admin
+from ..services.auth import require_admin
 from ..services.store import store
 from .common import complete_intake, require_data
 
-router = APIRouter(prefix="/scenarios", tags=["scenarios"], dependencies=[Depends(current_user)])
+# Reading the saved plans is public, like the dashboard; saving, copying and deleting need an administrator
+router = APIRouter(prefix="/scenarios", tags=["scenarios"])
 
 
 def _base_year(session: Session, s: M.ProjectionScenario) -> int:

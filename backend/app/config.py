@@ -37,6 +37,9 @@ class Settings(BaseSettings):
     session_hours: int = 12
     remember_days: int = 30
     session_cookie_secure: bool | None = None
+    # The dashboard runs inside another site's page (an iframe, e.g. https://gh.space.gov.rw): the browser keeps the
+    # cookie there only when it is SameSite=None; Secure; Partitioned. HTTPS only.
+    session_cookie_embed: bool = False
 
     @cached_property
     def url(self) -> str:

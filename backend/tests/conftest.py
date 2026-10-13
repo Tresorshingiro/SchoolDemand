@@ -12,6 +12,7 @@ from app.services.auth import hash_password
 
 TEST_EMAIL, TEST_PASSWORD = "pytest-user@example.test", "pytest-password-123"
 PYTEST_EMAILS = "pytest-%@example.test"  # every account the tests create matches this
+DASHBOARD = {"X-Requested-With": "fetch"}  # sent by the dashboard; changes without it are refused (csrf_refused)
 
 
 def _database_ready() -> bool:
@@ -56,7 +57,7 @@ def app_():
 @pytest.fixture(scope="session")
 def client(app_, test_user):
     """Signed in as the test administrator (the session cookie stays in the client)."""
-    c = TestClient(app_)  # no `with`: the data is already loaded by app_
+    c = TestClient(app_, headers=DASHBOARD)  # no `with`: the data is already loaded by app_
     r = c.post("/api/auth/login", json=test_user)
     assert r.status_code == 200, r.text
     return c
@@ -72,7 +73,7 @@ def make_client(app_):
                          password_hash=hash_password(password), is_active=True))
             s.commit()
             user_id = s.scalar(select(M.User.id).where(M.User.email == email))
-        c = TestClient(app_)
+        c = TestClient(app_, headers=DASHBOARD)
         r = c.post("/api/auth/login", json={"email": email, "password": password})
         assert r.status_code == 200, r.text
         return SimpleNamespace(client=c, email=email, password=password, id=user_id)
@@ -89,4 +90,4 @@ def viewer(make_client):
 @pytest.fixture
 def anonymous(app_):
     """Not signed in."""
-    return TestClient(app_)
+    return TestClient(app_, headers=DASHBOARD)

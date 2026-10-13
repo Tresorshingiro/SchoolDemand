@@ -10,6 +10,8 @@ from app import models as M
 from app import users as users_cli
 from app.db import SessionLocal
 
+DASHBOARD = {"X-Requested-With": "fetch"}  # as conftest.DASHBOARD
+
 
 def audit_rows(action: str, target: str) -> list[M.AuditLog]:
     with SessionLocal() as s:
@@ -67,17 +69,17 @@ def test_admin_plan_changes_are_audited(client):
 
 
 def test_forced_password_change_blocks_everything_else(make_client, app_):
-    u = make_client("viewer", must_change=True)
-    r = u.client.get("/api/meta")
+    u = make_client("admin", must_change=True)
+    r = u.client.get("/api/admin/users")
     assert r.status_code == 403 and r.json()["detail"] == "password_change_required"
-    assert u.client.post("/api/projection/run", json={"intake": {}}).status_code == 403
+    assert u.client.post("/api/scenarios", json={"name": unique("plan"), "intake": {}}).status_code == 403
     me = u.client.get("/api/auth/me")
     assert me.status_code == 200 and me.json()["must_change_password"] is True
     # signing out and in again does not lift it
     assert u.client.post("/api/auth/logout").status_code == 204
-    again = TestClient(app_)
+    again = TestClient(app_, headers=DASHBOARD)
     assert again.post("/api/auth/login", json={"email": u.email, "password": u.password}).status_code == 200
-    assert again.get("/api/meta").json()["detail"] == "password_change_required"
+    assert again.get("/api/admin/users").json()["detail"] == "password_change_required"
 
 
 def test_reload_needs_an_admin(anonymous, viewer):
@@ -94,7 +96,7 @@ def test_admin_can_reload(client):
 # ---------------------------------------------------------------- Task 3: change your own password
 def test_change_own_password(make_client, app_):
     u = make_client("viewer", must_change=True)
-    other = TestClient(app_)  # a second browser of the same person
+    other = TestClient(app_, headers=DASHBOARD)  # a second browser of the same person
     assert other.post("/api/auth/login", json={"email": u.email, "password": u.password}).status_code == 200
     post = lambda cur, new: u.client.post("/api/auth/password", json={"current_password": cur, "new_password": new})  # noqa: E731
 
@@ -106,9 +108,10 @@ def test_change_own_password(make_client, app_):
     assert r.status_code == 422 and r.json()["detail"] == "The password must have at least 8 characters."
 
     assert post(u.password, "brand-new-pass-1").status_code == 204
-    assert u.client.get("/api/meta").status_code == 200           # this browser stays signed in, no longer forced
+    me = u.client.get("/api/auth/me")                              # this browser stays signed in, no longer forced
+    assert me.status_code == 200 and me.json()["must_change_password"] is False
     assert other.get("/api/auth/me").status_code == 401            # the other one is signed out
-    fresh = TestClient(app_)
+    fresh = TestClient(app_, headers=DASHBOARD)
     assert fresh.post("/api/auth/login", json={"email": u.email, "password": "brand-new-pass-1"}).status_code == 200
     assert len(audit_rows("user.password_change", u.email)) == 1
 
@@ -125,7 +128,7 @@ def test_admin_creates_a_user(client, anonymous):
     dup = client.post("/api/admin/users", json={"email": email.upper(), "role": "viewer", "password": "temp-pass-123"})
     assert dup.status_code == 409 and dup.json()["detail"] == f"{email.lower()} already has an account."
     assert anonymous.post("/api/auth/login", json={"email": email, "password": "temp-pass-123"}).status_code == 200
-    assert anonymous.get("/api/meta").json()["detail"] == "password_change_required"
+    assert anonymous.get("/api/admin/users").json()["detail"] == "password_change_required"
     assert any(x["email"] == email.lower() for x in client.get("/api/admin/users").json())
     assert audit_rows("user.create", email.lower())[0].detail == {"role": "viewer"}
 
@@ -142,18 +145,18 @@ def test_create_user_is_validated(client, body, message):
 
 def test_disable_enable_and_reset(client, make_client, app_):
     u = make_client("viewer")
-    login = lambda pw: TestClient(app_).post("/api/auth/login", json={"email": u.email, "password": pw})  # noqa: E731
+    login = lambda pw: TestClient(app_, headers=DASHBOARD).post("/api/auth/login", json={"email": u.email, "password": pw})  # noqa: E731
     assert client.patch(f"/api/admin/users/{u.id}", json={"is_active": False}).json()["is_active"] is False
-    assert u.client.get("/api/meta").status_code == 401            # signed out at once
+    assert u.client.get("/api/auth/me").status_code == 401         # signed out at once
     assert login(u.password).status_code == 401
     assert client.patch(f"/api/admin/users/{u.id}", json={"is_active": True}).status_code == 200
     assert login(u.password).status_code == 200                    # same password works again
 
     assert client.post(f"/api/admin/users/{u.id}/password", json={"password": "reset-pass-123"}).status_code == 204
     assert login(u.password).status_code == 401
-    fresh = TestClient(app_)
+    fresh = TestClient(app_, headers=DASHBOARD)
     assert fresh.post("/api/auth/login", json={"email": u.email, "password": "reset-pass-123"}).status_code == 200
-    assert fresh.get("/api/meta").json()["detail"] == "password_change_required"
+    assert fresh.get("/api/auth/me").json()["must_change_password"] is True
     for action in ("user.disable", "user.enable", "user.password_reset"):
         assert len(audit_rows(action, u.email)) == 1
 

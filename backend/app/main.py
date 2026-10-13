@@ -9,12 +9,14 @@ from __future__ import annotations
 import logging
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from .config import settings
 from .routers import admin, auth, data, data_admin, projection, scenarios, system
+from .services.auth import csrf_refused
 from .services.store import store
 
 log = logging.getLogger("school_planning")
@@ -46,11 +48,20 @@ app = FastAPI(
     redoc_url=None,
     lifespan=lifespan,
 )
+
+
+@app.middleware("http")
+async def refuse_cross_site_changes(request: Request, call_next):
+    if csrf_refused(request):
+        return JSONResponse({"detail": "Refused: the request did not come from the dashboard."}, status_code=403)
+    return await call_next(request)
+
+
 if settings.cors_origins:
     app.add_middleware(CORSMiddleware, allow_origins=[o.strip() for o in settings.cors_origins.split(",") if o.strip()],
                        allow_methods=["*"], allow_headers=["*"], allow_credentials=True)  # the session cookie
 
-# Everything except health, reload (admin token) and sign-in needs a signed-in user; /admin/* an administrator
+# The dashboard's data, projections and saved plans are public; changing plans and /admin/* need an administrator
 # (services/auth.py)
 for router in (system.router, auth.router, data.router, projection.router, scenarios.router, admin.router,
                data_admin.router):
