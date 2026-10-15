@@ -6,6 +6,8 @@ RUN npm ci --no-audit --no-fund
 COPY . .
 # The ArcGIS bundle needs more than Node's default heap to build
 ENV NODE_OPTIONS=--max-old-space-size=4096
+# nginx.conf serves the dashboard at the root of the site (the default base is /school/, see vite.config.ts)
+ENV VITE_BASE=/
 RUN npm run build
 
 FROM nginx:1.27-alpine
