@@ -10,8 +10,6 @@ export const API_URL =
   (import.meta.env.VITE_API_URL as string | undefined)?.replace(/\/$/, '') ?? `${import.meta.env.BASE_URL}api`;
 
 export const AUTH_EXPIRED = 'auth:expired';
-/** A temporary password must be changed first (403 password_change_required): auth.tsx sends the user to the form. */
-export const PASSWORD_REQUIRED = 'auth:password-required';
 
 export class ApiError extends Error {
   constructor(message: string, readonly status: number) {
@@ -40,10 +38,6 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
       /* not JSON */
     }
     if (res.status === 401 && !path.startsWith('/auth/')) window.dispatchEvent(new Event(AUTH_EXPIRED));
-    if (res.status === 403 && detail === 'password_change_required') {
-      window.dispatchEvent(new Event(PASSWORD_REQUIRED));
-      detail = 'Please choose a new password first.';
-    }
     throw new ApiError(detail, res.status);
   }
   return (res.status === 204 ? undefined : await res.json()) as T;

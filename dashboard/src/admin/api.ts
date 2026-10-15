@@ -3,14 +3,15 @@ import { API_URL, getJson, sendForm, sendJson } from '../api';
 
 export type Role = 'admin' | 'viewer';
 
+/** A MINEDUC GIS portal user who has signed in (name and email come from the portal). */
 export interface AdminUser {
   id: number;
-  email: string;
+  username: string;
+  email: string | null;
   full_name: string | null;
   role: Role;
   is_active: boolean;
-  must_change_password: boolean;
-  created_at: string;
+  created_at: string; // first sign-in
   last_login_at: string | null;
 }
 
@@ -18,7 +19,7 @@ export interface AuditEntry {
   id: number;
   at: string;
   user_id: number | null;
-  user_email: string | null;
+  user_username: string | null;
   user_name: string | null;
   action: string;
   target: string;
@@ -27,14 +28,8 @@ export interface AuditEntry {
 
 export const listUsers = () => getJson<AdminUser[]>('/admin/users');
 
-export const createUser = (body: { email: string; full_name: string | null; role: Role; password: string }) =>
-  sendJson<AdminUser>('POST', '/admin/users', body);
-
-export const updateUser = (id: number, body: { full_name?: string | null; role?: Role; is_active?: boolean }) =>
+export const updateUser = (id: number, body: { role?: Role; is_active?: boolean }) =>
   sendJson<AdminUser>('PATCH', `/admin/users/${id}`, body);
-
-export const resetPassword = (id: number, password: string) =>
-  sendJson<void>('POST', `/admin/users/${id}/password`, { password });
 
 export function listAudit(p: { before?: number; userId?: number; action?: string; limit?: number } = {}) {
   const q = new URLSearchParams({ limit: String(p.limit ?? 50) });

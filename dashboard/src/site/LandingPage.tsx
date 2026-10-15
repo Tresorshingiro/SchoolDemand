@@ -1,12 +1,14 @@
 import { useEffect, useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { Activity, Map, MapPin, Target, type LucideIcon } from 'lucide-react';
+import { useAuth } from '../auth';
 import { landingDemo, portal } from './content';
 import { SiteFooter, SiteNav, scrollToSection } from './SiteChrome';
 import {
   CapacityIllustration, DemandIllustration, FutureIllustration, PopulationIllustration, demandColors,
 } from './Illustrations';
 import { useTheme } from '../theme';
+import classroom from './assets/classroom.jpg';
 
 const PLANNING_ICONS: Record<string, LucideIcon> = { 'map-pin': MapPin, target: Target, map: Map, activity: Activity };
 
@@ -34,6 +36,7 @@ function ConceptList({ items }: { items: readonly { title: string; text: string 
 }
 
 export default function LandingPage() {
+  const { user } = useAuth();
   const { mode } = useTheme();
   const { hash } = useLocation();
   const [year, setYear] = useState(landingDemo.projectionYears[0]);
@@ -60,6 +63,11 @@ export default function LandingPage() {
               <Link to="/dashboard" className="btn btn-cosmic">
                 View National Overview
               </Link>
+              {!user && (
+                <Link to="/login" className="btn btn-ghost">
+                  Sign in
+                </Link>
+              )}
             </div>
           </div>
 
@@ -210,7 +218,7 @@ export default function LandingPage() {
               </div>
             </div>
             <figure className="lp-image-moment lp-image-moment--side">
-              <img src={portal.hero} alt="" />
+              <img src={classroom} alt="An empty classroom with rows of desks facing a blackboard" />
               <figcaption>
                 <h3>Plan with changing needs in view.</h3>
                 <p>Timeline: 2026 → 2030 → 2035 → 2040</p>
@@ -254,7 +262,7 @@ export default function LandingPage() {
             data to provide a geographic view of education demand.
           </p>
           <p className="lp-signin-hint">
-            Explore detailed demographic, capacity, accessibility, and demand analysis, and run your own projections.
+            Access detailed demographic, capacity, accessibility, and demand analysis after signing in.
           </p>
         </section>
 
@@ -265,7 +273,7 @@ export default function LandingPage() {
             geographic view of education needs.
           </p>
           <Link to="/dashboard" className="btn btn-cosmic">
-            Open the dashboard
+            {user ? 'Open the dashboard' : 'Sign in to explore'}
           </Link>
         </section>
       </main>

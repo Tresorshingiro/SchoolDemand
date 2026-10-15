@@ -8,9 +8,8 @@ import { ThemeProvider } from './theme';
 import LandingPage from './site/LandingPage';
 import LoginPage from './site/LoginPage';
 import LegalPage from './site/LegalPage';
-import ChangePasswordPage from './site/ChangePasswordPage';
 
-// The dashboard (map, charts) loads only when opened, so the landing page stays light
+// The dashboard (map, charts) loads only after sign-in, so the landing page stays light
 const Dashboard = lazy(() => import('./App'));
 const Admin = lazy(() => import('./admin/AdminApp'));
 
@@ -72,15 +71,15 @@ createRoot(document.getElementById('root')!).render(
               <Route path="/" element={<LandingPage />} />
               <Route path="/login" element={<LoginPage />} />
               <Route path="/legal/:page" element={<LegalPage />} />
-              <Route path="/account/password" element={<RequireAuth><ChangePasswordPage /></RequireAuth>} />
             </Route>
-            {/* Public: anyone can see the data and run projections (this is the address other sites embed) */}
             <Route path="/dashboard" element={
-              <DashboardBoundary>
-                <Suspense fallback={loading}>
-                  <Dashboard />
-                </Suspense>
-              </DashboardBoundary>
+              <RequireAuth>
+                <DashboardBoundary>
+                  <Suspense fallback={loading}>
+                    <Dashboard />
+                  </Suspense>
+                </DashboardBoundary>
+              </RequireAuth>
             } />
             <Route path="/admin/*" element={
               <RequireAuth>

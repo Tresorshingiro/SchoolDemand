@@ -1,25 +1,25 @@
 /**
- * Who is signed in. The session itself is an HttpOnly cookie set by the API (POST /api/auth/login), so the page never
- * sees a token: it asks /api/auth/me on load and after sign-in / sign-out.
+ * Who is signed in. People sign in with their MINEDUC GIS portal account (the API checks it with the portal); the
+ * session itself is an HttpOnly cookie set by the API (POST /api/auth/login), so the page never sees a token: it asks
+ * /api/auth/me on load and after sign-in / sign-out.
  */
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { Navigate, useLocation } from 'react-router-dom';
-import { AUTH_EXPIRED, ApiError, PASSWORD_REQUIRED, getJson, sendJson } from './api';
+import { AUTH_EXPIRED, ApiError, getJson, sendJson } from './api';
 
 export interface User {
   id: number;
-  email: string;
-  full_name: string | null;
+  username: string; // MINEDUC GIS portal username
+  email: string | null; // from the portal profile
+  full_name: string | null; // from the portal profile
   role: 'admin' | 'viewer';
-  must_change_password: boolean; // a temporary password set by an admin: the user must choose their own first
 }
 
 interface AuthState {
   user: User | null;
   checking: boolean; // the first /auth/me has not answered yet
-  signIn: (email: string, password: string, remember: boolean) => Promise<User>;
+  signIn: (username: string, password: string, remember: boolean) => Promise<User>;
   signOut: () => Promise<void>;
-  refresh: () => Promise<void>; // re-read /auth/me (after a password change)
 }
 
 const AuthContext = createContext<AuthState | null>(null);
@@ -34,23 +34,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       .catch(() => setUser(null)) // 401: not signed in (or the API is unreachable — the sign-in page will say so)
       .finally(() => setChecking(false));
     const expired = () => setUser(null);
-    const mustChange = () => setUser((u) => (u ? { ...u, must_change_password: true } : u));
     window.addEventListener(AUTH_EXPIRED, expired);
-    window.addEventListener(PASSWORD_REQUIRED, mustChange);
-    return () => {
-      window.removeEventListener(AUTH_EXPIRED, expired);
-      window.removeEventListener(PASSWORD_REQUIRED, mustChange);
-    };
+    return () => window.removeEventListener(AUTH_EXPIRED, expired);
   }, []);
 
-  const signIn = useCallback(async (email: string, password: string, remember: boolean) => {
-    const u = await sendJson<User>('POST', '/auth/login', { email, password, remember });
+  const signIn = useCallback(async (username: string, password: string, remember: boolean) => {
+    const u = await sendJson<User>('POST', '/auth/login', { username, password, remember });
     setUser(u);
     return u;
-  }, []);
-
-  const refresh = useCallback(async () => {
-    setUser(await getJson<User>('/auth/me'));
   }, []);
 
   const signOut = useCallback(async () => {
@@ -63,7 +54,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
-  const value = useMemo(() => ({ user, checking, signIn, signOut, refresh }), [user, checking, signIn, signOut, refresh]);
+  const value = useMemo(() => ({ user, checking, signIn, signOut }), [user, checking, signIn, signOut]);
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
 
@@ -74,17 +65,12 @@ export function useAuth(): AuthState {
 }
 
 /** The name to show for a user. */
-export const displayName = (u: User) => u.full_name || u.email;
+export const displayName = (u: User) => u.full_name || u.username;
 
-/** Admins manage accounts and saved plans; viewers read and try plans. */
+/** Admins manage accounts, data and saved plans; viewers read and try plans. */
 export const isAdmin = (u: User | null) => u?.role === 'admin';
 
-export const PASSWORD_PAGE = '/account/password';
-
-/**
- * Only for signed-in users; others go to the sign-in page and come back here afterwards. A user with a temporary
- * password is sent to the password page first.
- */
+/** Only for signed-in users; others go to the sign-in page and come back here afterwards. */
 export function RequireAuth({ children }: { children: ReactNode }) {
   const { user, checking } = useAuth();
   const location = useLocation();
@@ -93,7 +79,6 @@ export function RequireAuth({ children }: { children: ReactNode }) {
     const next = encodeURIComponent(location.pathname + location.search);
     return <Navigate to={`/login?next=${next}`} replace />;
   }
-  if (user.must_change_password && location.pathname !== PASSWORD_PAGE) return <Navigate to={PASSWORD_PAGE} replace />;
   return <>{children}</>;
 }
 

@@ -1,15 +1,16 @@
 import { useState, type FormEvent } from 'react';
 import { Link, Navigate, useNavigate, useSearchParams } from 'react-router-dom';
-import { ArrowLeft, Eye, EyeOff, Loader2, Lock, Mail } from 'lucide-react';
+import { ArrowLeft, Eye, EyeOff, Loader2, Lock, UserRound } from 'lucide-react';
 import { safeNext, useAuth } from '../auth';
 import AuthFrame from './AuthFrame';
 
+/** Sign in with a MINEDUC GIS portal account: the API checks the username and password with the portal. */
 export default function LoginPage() {
   const { user, checking, signIn } = useAuth();
   const navigate = useNavigate();
   const [params] = useSearchParams();
   const next = safeNext(params.get('next'));
-  const [email, setEmail] = useState('');
+  const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [show, setShow] = useState(false);
   const [remember, setRemember] = useState(false);
@@ -23,13 +24,13 @@ export default function LoginPage() {
     event.preventDefault();
     setError('');
     setInfo('');
-    if (!email.trim() || !password) {
-      setError('Email and password are required.');
+    if (!username.trim() || !password) {
+      setError('Username and password are required.');
       return;
     }
     setLoading(true);
     try {
-      await signIn(email.trim(), password, remember);
+      await signIn(username.trim(), password, remember);
       navigate(next, { replace: true });
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -43,15 +44,16 @@ export default function LoginPage() {
       <form className="auth2-form" onSubmit={onSubmit} noValidate>
         <div className="auth2-head">
           <h1>Welcome back</h1>
-          <p>Administrators: sign in to manage the data and the accounts.</p>
+          <p>Sign in to your account to open the dashboard.</p>
         </div>
 
         <label className="auth2-field">
-          <span>Email</span>
+          <span>Username</span>
           <span className="auth2-input">
-            <Mail size={16} aria-hidden />
-            <input type="email" name="email" autoComplete="email" placeholder="you@mineduc.gov.rw" value={email}
-              onChange={(e) => setEmail(e.target.value)} disabled={loading} autoFocus />
+            <UserRound size={16} aria-hidden />
+            <input type="text" name="username" autoComplete="username" autoCapitalize="none" spellCheck={false}
+              placeholder="Your username" value={username}
+              onChange={(e) => setUsername(e.target.value)} disabled={loading} autoFocus />
           </span>
         </label>
 
@@ -74,7 +76,7 @@ export default function LoginPage() {
             Remember me
           </label>
           <button type="button" className="auth-link-btn"
-            onClick={() => setInfo('Ask your administrator to set a new password for your account.')}>
+            onClick={() => setInfo('Your password is the one of the MINEDUC GIS portal (gh.space.gov.rw/portal). Reset it there, or ask the portal administrator.')}>
             Forgot password?
           </button>
         </div>

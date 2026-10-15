@@ -37,8 +37,8 @@ export const COLORS = {
 export type Palette = (typeof COLORS)[Mode];
 
 /**
- * Diverging classes for the classroom gap (red = deficit, grey = exact fit, blue = surplus).
- * On the dark basemap the strongest classes step lighter so they stay the most salient.
+ * Diverging classes for the classroom gap (red = deficit, grey = exact fit, blue = surplus). The same colours in both
+ * themes, so the map, its legend and the charts always match: the darker the colour, the larger the gap.
  */
 export interface GapClass {
   min: number;
@@ -49,13 +49,13 @@ export interface GapClass {
 }
 
 export const GAP_CLASSES: GapClass[] = [
-  { min: -100000, max: -10, label: '10+ short', light: '#a3201f', dark: '#ff8a85' },
+  { min: -100000, max: -10, label: '10+ short', light: '#a3201f', dark: '#a3201f' },
   { min: -9, max: -4, label: '4–9 short', light: '#e34948', dark: '#e34948' },
-  { min: -3, max: -1, label: '1–3 short', light: '#f29b97', dark: '#9e3b39' },
-  { min: 0, max: 0, label: 'Exact fit', light: '#a3a19a', dark: '#6b6a64' },
-  { min: 1, max: 3, label: '1–3 spare', light: '#86b6ef', dark: '#1c5cab' },
-  { min: 4, max: 9, label: '4–9 spare', light: '#2a78d6', dark: '#3987e5' },
-  { min: 10, max: 100000, label: '10+ spare', light: '#184f95', dark: '#86b6ef' },
+  { min: -3, max: -1, label: '1–3 short', light: '#f29b97', dark: '#f29b97' },
+  { min: 0, max: 0, label: 'Exact fit', light: '#a3a19a', dark: '#a3a19a' },
+  { min: 1, max: 3, label: '1–3 spare', light: '#86b6ef', dark: '#86b6ef' },
+  { min: 4, max: 9, label: '4–9 spare', light: '#2a78d6', dark: '#2a78d6' },
+  { min: 10, max: 100000, label: '10+ spare', light: '#184f95', dark: '#184f95' },
 ];
 
 /**
@@ -77,7 +77,7 @@ export function gradeColors(n: number, mode: Mode): string[] {
 
 export const STATUS_COLORS = {
   light: { Deficit: '#e34948', 'Exact fit': '#a3a19a', Surplus: '#2a78d6' },
-  dark: { Deficit: '#e66767', 'Exact fit': '#6b6a64', Surplus: '#3987e5' },
+  dark: { Deficit: '#e34948', 'Exact fit': '#a3a19a', Surplus: '#2a78d6' }, // as light: the map keeps its colours
 } as const;
 
 const STORAGE_KEY = 'classroom-dashboard-theme';

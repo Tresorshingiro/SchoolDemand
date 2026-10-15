@@ -19,12 +19,13 @@ const KIND: Record<string, { icon: LucideIcon; color: string }> = {
 };
 
 /** Who did it: a name, or the system (command line, or an account removed since). */
-const actor = (e: AuditEntry) => e.user_name || e.user_email || 'System';
+const actor = (e: AuditEntry) => e.user_name || e.user_username || 'System';
 
-/** What was done, as the rest of a sentence after the actor. */
+/** What was done, as the rest of a sentence after the actor. Older entries (accounts with passwords) included. */
 export function action(e: AuditEntry): string {
   const d = e.detail ?? {};
   switch (e.action) {
+    case 'user.first_sign_in': return `signed in for the first time (${String(d.role ?? 'admin')})`;
     case 'user.create': return `added ${e.target} as ${String(d.role ?? 'viewer')}`;
     case 'user.update': return `renamed ${e.target} to "${String(d.full_name ?? '')}"`;
     case 'user.role': return `changed ${e.target} from ${String(d.from)} to ${String(d.to)}`;
@@ -102,7 +103,7 @@ export default function ActivityPage() {
             <select aria-label="Who" className={field} value={userId ?? ''}
               onChange={(e) => setUserId(e.target.value === '' ? undefined : Number(e.target.value))}>
               <option value="">Everyone</option>
-              {users.map((u) => <option key={u.id} value={u.id}>{u.full_name || u.email}</option>)}
+              {users.map((u) => <option key={u.id} value={u.id}>{u.full_name || u.username}</option>)}
             </select>
             <select aria-label="Action" className={field} value={filter} onChange={(e) => setFilter(e.target.value)}>
               {ACTIONS.map((a) => <option key={a.value} value={a.value}>{a.label}</option>)}

@@ -8,11 +8,11 @@ sector boundaries, the projection runs and the saved plans.
 
 ```powershell
 npm install
-npm run dev       # http://localhost:5173/school/ — /school/api is forwarded to the API on http://127.0.0.1:8000 (vite.config.ts)
+npm run dev       # http://localhost:5173 — /api is forwarded to the API on http://127.0.0.1:8000 (vite.config.ts)
 ```
 
-Start the API first (see `../backend/README.md`); `API_PROXY_TARGET` points the dev server at another one. Create an
-account to sign in with: `python -m app.users create you@example.org` in `backend/`.
+Start the API first (see `../backend/README.md`); `API_PROXY_TARGET` points the dev server at another one. Sign in
+with a MINEDUC GIS portal account (the API checks it with the portal).
 
 ## Pages and sign-in
 
@@ -42,8 +42,7 @@ npm run build     # output in dist/
 
 Serve `dist/` with `/api` forwarded to the API: nginx in the Docker setup (`nginx.conf`, `Dockerfile`), IIS with
 `../deploy/windows/web.config` on Windows — see `../deploy/README.md`. Both also send page addresses (`/login`,
-`/dashboard` …) to `index.html`. The build lives under `/school/`; for another path build with
-`VITE_BASE=/other/` (or `VITE_BASE=/` for the root); when the API lives elsewhere, build
+`/dashboard` …) to `index.html`. Under a sub-path build with `VITE_BASE=/school/`; when the API lives elsewhere, build
 with `VITE_API_URL`. Viewers need internet access to `js.arcgis.com` and `services.arcgisonline.com` for the map.
 
 ## Map
@@ -116,7 +115,7 @@ snapshot and the first 25 schools of the table in its current sort. It opens the
 All figures come from `backend/app/domain/analysis.py` and `projection.py` — one engine, used by the API and by the
 Excel scripts (`School_Classroom_Analysis_2026.xlsx`, `Classroom_Projection_2026_2030_*.xlsx`), so the dashboard and
 workbooks always agree. The browser only displays and filters them.
-Capacity is 45 students per classroom for every level.
+Capacity is 46 students per classroom for every level (`LEVELS` in `analysis.py`).
 
 To update the data, replace the files in `data-sources/` (same columns), run the import job
 (`python -m etl.load_version2` in `backend/`) and restart the API. Once real 2030 catchment figures arrive, remove

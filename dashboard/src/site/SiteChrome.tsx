@@ -2,7 +2,7 @@
 import { useEffect, useState, type MouseEvent } from 'react';
 import { Link } from 'react-router-dom';
 import { Menu, X } from 'lucide-react';
-import { isAdmin, useAuth } from '../auth';
+import { useAuth } from '../auth';
 import { ThemeToggle } from '../theme';
 import { SECTIONS, portal } from './content';
 import appIcon from './assets/app-icon.png';
@@ -29,19 +29,14 @@ function SectionLink({ id, label, onLanding, onDone }: { id: string; label: stri
   return <a href={`#${id}`} onClick={onClick}>{label}</a>;
 }
 
-/** The dashboard is public: the header button opens it, no sign-in. */
-function DashboardLink({ className, onDone }: { className?: string; onDone?: () => void }) {
+/** Sign in, or open the dashboard when already signed in. */
+function AccountLink({ className, onDone }: { className?: string; onDone?: () => void }) {
+  const { user } = useAuth();
   return (
-    <Link to="/dashboard" className={className} onClick={onDone}>
-      Open dashboard
+    <Link to={user ? '/dashboard' : '/login'} className={className} onClick={onDone}>
+      {user ? 'Open dashboard' : 'Sign in'}
     </Link>
   );
-}
-
-/** Only administrators sign in (to the admin portal); a quiet link in the footer. */
-function AdminLink() {
-  const { user } = useAuth();
-  return isAdmin(user) ? <Link to="/admin">Admin portal</Link> : <Link to="/login?next=/admin">Admin sign in</Link>;
 }
 
 export function SiteNav({ onLanding = false }: { onLanding?: boolean }) {
@@ -77,7 +72,7 @@ export function SiteNav({ onLanding = false }: { onLanding?: boolean }) {
 
         <div className="lp-nav-actions">
           <ThemeToggle className="lp-theme-btn" />
-          <DashboardLink className="lp-nav-signin" />
+          <AccountLink className="lp-nav-signin" />
           <button type="button" className="lp-menu-btn" aria-label={menuOpen ? 'Close menu' : 'Open menu'}
             aria-expanded={menuOpen} onClick={() => setMenuOpen((v) => !v)}>
             {menuOpen ? <X size={18} strokeWidth={1.8} /> : <Menu size={18} strokeWidth={1.8} />}
@@ -88,7 +83,7 @@ export function SiteNav({ onLanding = false }: { onLanding?: boolean }) {
       {menuOpen ? (
         <div className="lp-nav-drawer">
           {SECTIONS.map((s) => <SectionLink key={s.id} {...s} onLanding={onLanding} onDone={close} />)}
-          <DashboardLink onDone={close} />
+          <AccountLink onDone={close} />
         </div>
       ) : null}
     </header>
@@ -111,9 +106,8 @@ export function SiteFooter({ onLanding = false }: { onLanding?: boolean }) {
           {SECTIONS.map((s) => <SectionLink key={s.id} {...s} onLanding={onLanding} />)}
         </nav>
         <div className="lp-footer-col">
-          <h3>Dashboard</h3>
-          <DashboardLink />
-          <AdminLink />
+          <h3>Account</h3>
+          <AccountLink />
         </div>
       </div>
       <div className="lp-footer-base">

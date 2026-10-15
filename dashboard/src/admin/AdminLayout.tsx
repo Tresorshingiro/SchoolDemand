@@ -64,7 +64,7 @@ export default function AdminLayout({ children }: { children: ReactNode }) {
         <div className="flex items-center gap-2.5 rounded-xl border border-line bg-page p-2.5">
           <Avatar name={displayName(user)} size={34} />
           <div className="min-w-0 flex-1">
-            <div className="truncate text-[13px] font-medium text-ink" title={user.email}>{displayName(user)}</div>
+            <div className="truncate text-[13px] font-medium text-ink" title={user.username}>{displayName(user)}</div>
             <div className="text-[11px] text-muted">Administrator</div>
           </div>
           <ThemeToggle className={btn.icon} />

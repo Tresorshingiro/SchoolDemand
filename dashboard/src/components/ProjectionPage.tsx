@@ -188,7 +188,7 @@ export default function ProjectionPage({ current, mode }: { current: Dataset; mo
   const [base, setBase] = useState<ProjectionBase | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [intake, setIntake] = useState<Intake | null>(null);
-  const [picked, setYear] = useState<number | null>(null); // null = the actual (newest published) year
+  const [picked, setYear] = useState<number | null>(null); // null = the base year (the newest actual school year)
   const [plannerOpen, setPlannerOpen] = useState(true);
   // Saved scenarios (database) and the one on screen
   const [scenarios, setScenarios] = useState<ScenarioSummary[]>([]);

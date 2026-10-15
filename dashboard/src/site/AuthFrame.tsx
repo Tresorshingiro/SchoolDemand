@@ -1,5 +1,5 @@
 /**
- * The frame of the sign-in and password pages: a brand panel (Rwanda's districts, what the platform does) beside the
+ * The frame of the sign-in page: a brand panel (Rwanda's districts, what the platform does) beside the
  * form. On phones the brand panel becomes a slim header.
  */
 import type { ReactNode } from 'react';

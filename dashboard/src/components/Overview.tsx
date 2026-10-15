@@ -13,7 +13,7 @@ import {
   CompareBars, CrowdingByArea, DoubleShiftByArea, GapHistogram, GradeChart, GradeLegend, ShortageByArea, StackedGradesByArea, StatusSplit, dsName,
 } from './Charts';
 
-export const PRIMARY = 1;
+export const PRE_PRIMARY = 0; // the level shown first (index into meta.levels)
 const TOP_SCHOOLS = 50; // schools in the largest-schools chart
 
 export function Card({ title, sub, children, className = '', aside }: {
@@ -68,17 +68,17 @@ function Stat({ icon, label, value, note, alert = false, className = '' }: {
   icon: keyof typeof ICONS; label: string; value: string; note?: string; alert?: boolean; className?: string;
 }) {
   return (
-    <div className={`card relative overflow-hidden px-4 py-3 ${className}`}>
+    <div className={`card relative overflow-hidden px-3.5 py-2 ${className}`}>
       {alert && <div className="absolute inset-x-0 top-0 h-[3px] bg-[var(--deficit)]" aria-hidden="true" />}
       <div className="flex items-center gap-2 text-xs text-ink2">
-        <span className={`grid h-7 w-7 place-items-center rounded-md ${
+        <span className={`grid h-6 w-6 place-items-center rounded-md ${
           alert ? 'bg-[var(--deficit-soft)] text-[var(--deficit)]' : 'bg-[var(--accent-soft)] text-accent'}`}>
-          <Icon name={icon} />
+          <Icon name={icon} className="h-4 w-4" />
         </span>
         {label}
       </div>
-      <div className="mt-2 text-2xl font-semibold text-ink">{value}</div>
-      {note && <div className="mt-0.5 text-xs text-muted">{note}</div>}
+      <div className="mt-1 text-xl font-semibold leading-tight text-ink">{value}</div>
+      {note && <div className="text-[11px] leading-snug text-muted">{note}</div>}
     </div>
   );
 }
@@ -94,20 +94,18 @@ function Tiles({ t, notes, level }: {
           <Stat icon="school" label="Schools" value={fmt(t.schools)} note={`offering ${level.label.toLowerCase()}`} />
           <Stat icon="students" label="Students" value={fmt(t.students)} note={`${avg(t.students, t.schools)} per school on average`} />
           <Stat icon="groups" label="Class groups" value={fmt(t.classGroups)}
-            note={`${avg(t.students, t.classGroups)} students per group on average`} />
+            note={`${avg(t.students, t.classGroups)} students per group`} />
           <Stat icon="door" label="Rooms available" value={fmt(t.available)} note={notes.available} />
         </div>
       </section>
       <section aria-label="What is needed">
         <div className="print-tiles-3 grid grid-cols-2 gap-3 sm:grid-cols-3">
           <Stat icon="required" label="Rooms required" value={fmt(t.required)}
-            note={level.fullDay
-              ? `a room per class group, ${level.capacity} per room, per grade and combination`
-              : `students ÷ ${level.capacity}, rounded up per school`} />
+            note={level.fullDay ? `a room per group, ${level.capacity} per room` : `students ÷ ${level.capacity}, rounded up`} />
           <Stat icon="shift" label={dsName(level.fullDay)} value={fmt(t.doubleShift)}
-            note={`${pct(t.doubleShift, t.classGroups)} of class groups${level.fullDay ? ' · full day, no double shift' : ''}`} />
+            note={`${pct(t.doubleShift, t.classGroups)} of class groups${level.fullDay ? ' · full day' : ''}`} />
           <Stat icon="alert" label="Classrooms short" value={fmt(t.short)} alert className="col-span-2 sm:col-span-1"
-            note={`in ${fmt(t.deficitSchools)} schools · net gap ${fmtGap(t.netGap)}`} />
+            note={`in ${fmt(t.deficitSchools)} schools · net ${fmtGap(t.netGap)}`} />
         </div>
       </section>
     </div>
@@ -138,11 +136,11 @@ interface Props {
   footer?: (capacity: number) => ReactNode;
 }
 
-/** Filter bar, stat tiles, resource charts, then shortage map, charts and school table over one Dataset. */
+/** Filter bar, stat tiles, the shortage map, resource charts, then shortage charts and school table over one Dataset. */
 export default function Overview({
   data, mode, showLevels = false, controls, scopePrefix, top, shortageTop, afterCharts, notes, panelContext, footer,
 }: Props) {
-  const [filters, setFilters] = useState<Filters>({ level: PRIMARY, district: '', sector: '' });
+  const [filters, setFilters] = useState<Filters>({ level: PRE_PRIMARY, district: '', sector: '' });
   const [selected, setSelected] = useState<number | null>(null);
   const printing = usePrinting();
 
@@ -295,6 +293,27 @@ export default function Overview({
         </div>
         <Tiles t={t} notes={notes} level={level} />
 
+        {/* The map and the gap split come first, right under the tiles */}
+        <div className="print-cols-3 grid gap-4 lg:grid-cols-3">
+          <Card title="Schools on the map" sub="Colour shows the classroom gap. Use the legend on the map to filter; click a cluster to zoom in, a school for its details." className="print-span-2 print-map flex min-h-[600px] flex-col lg:col-span-2">
+            <div className="flex-1">
+              <SchoolMap rows={rows} mode={mode} selected={selected} onSelect={setSelected}
+                district={filters.district} sector={filters.sector} />
+            </div>
+          </Card>
+          <div className="flex flex-col gap-4">
+            <Card title="Schools by classroom gap" sub={`${fmt(t.schools)} schools in scope · same colours as the map`}>
+              <div className="px-4 pb-2"><StatusSplit t={t} mode={mode} /></div>
+              <div className="px-2 pb-2"><GapHistogram gaps={gaps} mode={mode} /></div>
+            </Card>
+            <Card title={`Classrooms short by ${areaLabel}`} sub={pickHint} className="flex-1">
+              <div className="print-expand max-h-[300px] overflow-y-auto px-2 pb-2">
+                <ShortageByArea data={byArea} mode={mode} areaLabel={areaLabel} onPick={pickArea} />
+              </div>
+            </Card>
+          </div>
+        </div>
+
         {top?.(codes, filters, pickSchool)}
 
         {/* ---------------------------------------------------------------- what schools have */}
@@ -329,26 +348,6 @@ export default function Overview({
           sub={`Rooms available against rooms required at ${level.capacity} students per room`} />
 
         {shortageTop?.(codes, filters)}
-
-        <div className="print-cols-3 grid gap-4 lg:grid-cols-3">
-          <Card title="Schools on the map" sub="Colour shows the classroom gap. Use the legend on the map to filter; click a cluster to zoom in, a school for its details." className="print-span-2 print-map flex min-h-[600px] flex-col lg:col-span-2">
-            <div className="flex-1">
-              <SchoolMap rows={rows} mode={mode} selected={selected} onSelect={setSelected}
-                district={filters.district} sector={filters.sector} />
-            </div>
-          </Card>
-          <div className="flex flex-col gap-4">
-            <Card title="Schools by classroom gap" sub={`${fmt(t.schools)} schools in scope · same colours as the map`}>
-              <div className="px-4 pb-2"><StatusSplit t={t} mode={mode} /></div>
-              <div className="px-2 pb-2"><GapHistogram gaps={gaps} mode={mode} /></div>
-            </Card>
-            <Card title={`Classrooms short by ${areaLabel}`} sub={pickHint} className="flex-1">
-              <div className="print-expand max-h-[300px] overflow-y-auto px-2 pb-2">
-                <ShortageByArea data={byArea} mode={mode} areaLabel={areaLabel} onPick={pickArea} />
-              </div>
-            </Card>
-          </div>
-        </div>
 
         <div className="print-cols-3 grid gap-4 lg:grid-cols-3">
           <Card title={`Rooms available vs required by ${filters.district ? 'sector' : 'province'}`}

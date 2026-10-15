@@ -12,7 +12,7 @@ const PAGES: Record<string, { title: string; paragraphs: string[] }> = {
   privacy: {
     title: 'Privacy',
     paragraphs: [
-      'The dashboard is open to everyone without an account. Only administrators sign in, to manage data and accounts. Accounts are created by an administrator. Signing in uses your email address and a password; the password is stored only as a one-way hash, never in readable form.',
+      'You sign in with your MINEDUC GIS portal account. The portal checks your username and password; this platform never stores your password. It keeps your username, and the name and email address from your portal profile.',
       'After you sign in, a session cookie keeps you signed in: until you close the browser, or for up to 30 days when you tick "Remember me". Signing out ends the session. The platform records when you last signed in and the name on intake plans you save.',
       'The map loads basemap tiles from ArcGIS / OpenStreetMap services, which see the map area requested but not your account.',
     ],
@@ -21,7 +21,7 @@ const PAGES: Record<string, { title: string; paragraphs: string[] }> = {
     title: 'Terms of Use',
     paragraphs: [
       'Use this workspace only for lawful, authorized purposes related to school demand, demographics, and institutional mandates in Rwanda.',
-      'Do not attempt to bypass access controls, scrape protected services, or redistribute proprietary content without permission. Keep your password to yourself; each person uses their own account.',
+      'Do not attempt to bypass access controls, scrape protected services, or redistribute proprietary content without permission. Keep your portal password to yourself; each person uses their own account.',
     ],
   },
   accessibility: {
