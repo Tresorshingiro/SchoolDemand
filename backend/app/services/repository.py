@@ -70,7 +70,7 @@ def read_nisr(session: Session) -> pd.DataFrame:
 def live_imports(session: Session) -> list[tuple[M.ImportRun, str | None]]:
     """The live data (one import per kind, per school year for school data) with the name of who published it."""
     return [(run, name) for run, name in session.execute(
-        select(M.ImportRun, func.coalesce(M.User.full_name, M.User.email))
+        select(M.ImportRun, func.coalesce(M.User.full_name, M.User.username))
         .outerjoin(M.User, M.User.id == M.ImportRun.published_by_id)
         .where(M.ImportRun.is_live).order_by(M.ImportRun.kind, M.ImportRun.academic_year)
     ).all()]

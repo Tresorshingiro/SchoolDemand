@@ -37,9 +37,16 @@ class Settings(BaseSettings):
     session_hours: int = 12
     remember_days: int = 30
     session_cookie_secure: bool | None = None
-    # The dashboard runs inside another site's page (an iframe, e.g. https://gh.space.gov.rw): the browser keeps the
-    # cookie there only when it is SameSite=None; Secure; Partitioned. HTTPS only.
-    session_cookie_embed: bool = False
+    # The dashboard opened inside another site's page (Education Mapping on gh.space.gov.rw shows it in a frame): the
+    # browser keeps the cookie there only when it is SameSite=None; Secure; Partitioned. None = whenever the cookie is
+    # Secure (HTTPS); plain HTTP (development) keeps SameSite=Lax.
+    session_cookie_cross_site: bool | None = None
+
+    # Sign-in goes through the MINEDUC GIS portal (ArcGIS Enterprise, services/portal.py): its users are our users.
+    portal_url: str = "https://gh.space.gov.rw/portal"
+    portal_referer: str = "https://gh.space.gov.rw/school/"  # the portal ties its token to this referer
+    portal_timeout: float = 15  # seconds per request to the portal
+    portal_verify_ssl: bool = True  # False only for a portal with a self-signed certificate
 
     @cached_property
     def url(self) -> str:

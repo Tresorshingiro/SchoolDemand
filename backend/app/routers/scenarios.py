@@ -15,12 +15,11 @@ from ..db import get_session
 from ..domain import projection as P
 from ..schemas import Intake, ScenarioCopyIn, ScenarioIn, ScenarioOut, ScenarioSummary
 from ..services.audit import audit
-from ..services.auth import require_admin
+from ..services.auth import current_user, require_admin
 from ..services.store import store
 from .common import complete_intake, require_data
 
-# Reading the saved plans is public, like the dashboard; saving, copying and deleting need an administrator
-router = APIRouter(prefix="/scenarios", tags=["scenarios"])
+router = APIRouter(prefix="/scenarios", tags=["scenarios"], dependencies=[Depends(current_user)])
 
 
 def _base_year(session: Session, s: M.ProjectionScenario) -> int:
@@ -79,7 +78,7 @@ def _get(session: Session, scenario_id: int) -> M.ProjectionScenario:
 def _new(session: Session, name: str, description: str | None, user: M.User, intake: Intake) -> M.ProjectionScenario:
     h = _current()
     base_year = session.scalar(select(M.AcademicYear.id).where(M.AcademicYear.year == h.base))
-    s = M.ProjectionScenario(name=name.strip(), description=description, created_by=(user.full_name or user.email)[:100],
+    s = M.ProjectionScenario(name=name.strip(), description=description, created_by=(user.full_name or user.username)[:100],
                              base_year_id=base_year, end_year=h.years[-1])
     session.add(s)
     try:

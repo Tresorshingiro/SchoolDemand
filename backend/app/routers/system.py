@@ -40,6 +40,6 @@ async def reload(request: Request, x_admin_token: str = Header(""), session: Ses
         user = auth.session_user(request, session)
         if user is None:
             raise HTTPException(401, "Sign in as an administrator, or send the X-Admin-Token header.")
-        if user.role != "admin" or user.must_change_password:
+        if user.role != "admin":
             raise HTTPException(403, "Only an administrator can do this.")
     return await run_in_threadpool(store.load)

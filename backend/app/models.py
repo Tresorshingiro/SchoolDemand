@@ -94,7 +94,7 @@ class LevelNorm(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     level_id: Mapped[int] = mapped_column(ForeignKey("school_levels.id"))
     academic_year_id: Mapped[int] = mapped_column(ForeignKey("academic_years.id"))
-    classroom_capacity: Mapped[int] = mapped_column(SmallInteger, default=45)
+    classroom_capacity: Mapped[int] = mapped_column(SmallInteger, default=46)
 
 
 # ---------------------------------------------------------------- schools, classrooms, class groups
@@ -248,16 +248,17 @@ class ProjectionScenario(Base):
 
 
 class User(Base):
-    """A person who can sign in to the dashboard. Admins manage accounts and saved plans; viewers only read."""
+    """A MINEDUC GIS portal user who has signed in to the dashboard (added at first sign-in; the portal keeps the
+    password). Admins manage accounts, data and saved plans; viewers only read."""
     __tablename__ = "users"
-    __table_args__ = (CheckConstraint("role IN ('admin', 'viewer')", name="ck_users_role"),)
+    __table_args__ = (CheckConstraint("role IN ('admin', 'viewer')", name="ck_users_role"),
+                      Index("ux_users_username", text("lower(username)"), unique=True))
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    email: Mapped[str] = mapped_column(String(254), unique=True, comment="stored in lower case")
-    full_name: Mapped[str | None] = mapped_column(String(100))
-    password_hash: Mapped[str] = mapped_column(String(255), comment="argon2id")
-    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    username: Mapped[str] = mapped_column(String(128), comment="portal username, as the portal writes it")
+    email: Mapped[str | None] = mapped_column(String(254), comment="from the portal profile")
+    full_name: Mapped[str | None] = mapped_column(String(100), comment="from the portal profile")
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, comment="False: disabled here, even if the portal allows")
     role: Mapped[str] = mapped_column(String(10), default="viewer", server_default="viewer", comment="admin or viewer")
-    must_change_password: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
     created_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

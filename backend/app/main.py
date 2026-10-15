@@ -61,7 +61,7 @@ if settings.cors_origins:
     app.add_middleware(CORSMiddleware, allow_origins=[o.strip() for o in settings.cors_origins.split(",") if o.strip()],
                        allow_methods=["*"], allow_headers=["*"], allow_credentials=True)  # the session cookie
 
-# The dashboard's data, projections and saved plans are public; changing plans and /admin/* need an administrator
+# Everything except health, reload (admin token) and sign-in needs a signed-in user; /admin/* an administrator
 # (services/auth.py)
 for router in (system.router, auth.router, data.router, projection.router, scenarios.router, admin.router,
                data_admin.router):

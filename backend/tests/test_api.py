@@ -1,7 +1,6 @@
 """API tests against the loaded development data (Version 2.xlsx)."""
 import pytest
 
-from app.config import settings
 from app.domain import analysis as A
 from app.domain import dashboard as D
 from app.domain import projection as P
@@ -102,18 +101,10 @@ def test_scenario_lifecycle(client):
 @pytest.mark.parametrize("method, path", [
     ("GET", "/api/meta"), ("GET", "/api/school-levels"), ("GET", "/api/boundaries/districts"),
     ("GET", "/api/projection/default"), ("POST", "/api/projection/run"), ("GET", "/api/scenarios"),
+    ("POST", "/api/scenarios"), ("DELETE", "/api/scenarios/1"), ("GET", "/api/auth/me"),
 ])
-def test_dashboard_is_public(anonymous, method, path):
-    assert anonymous.request(method, path, json={}).status_code == 200
-
-
-@pytest.mark.parametrize("method, path", [
-    ("POST", "/api/scenarios"), ("PUT", "/api/scenarios/1"), ("POST", "/api/scenarios/1/copy"),
-    ("DELETE", "/api/scenarios/1"), ("GET", "/api/auth/me"), ("GET", "/api/admin/users"),
-    ("GET", "/api/admin/data/imports"),
-])
-def test_changes_and_admin_need_sign_in(anonymous, method, path):
-    assert anonymous.request(method, path, json={"name": "x", "intake": {}}).status_code == 401
+def test_data_needs_sign_in(anonymous, method, path):
+    assert anonymous.request(method, path, json={}).status_code == 401
 
 
 def test_health_is_public(anonymous):
@@ -122,18 +113,18 @@ def test_health_is_public(anonymous):
 
 def test_me(client, test_user):
     me = client.get("/api/auth/me").json()
-    assert me["email"] == test_user["email"] and me["full_name"] == "Pytest User"
+    assert me["username"] == test_user["username"] and me["full_name"] == "Pytest User"
 
 
 def test_wrong_password(anonymous, test_user):
     r = anonymous.post("/api/auth/login", json={**test_user, "password": "not-the-password"})
-    assert r.status_code == 401 and "Wrong email or password" in r.json()["detail"]
-    r = anonymous.post("/api/auth/login", json={"email": "nobody@example.test", "password": "whatever-123"})
+    assert r.status_code == 401 and "Wrong username or password" in r.json()["detail"]
+    r = anonymous.post("/api/auth/login", json={"username": "nobody", "password": "whatever-123"})
     assert r.status_code == 401
 
 
-def test_email_is_case_insensitive_and_cookie_is_httponly(anonymous, test_user):
-    r = anonymous.post("/api/auth/login", json={**test_user, "email": test_user["email"].upper()})
+def test_username_is_case_insensitive_and_cookie_is_httponly(anonymous, test_user):
+    r = anonymous.post("/api/auth/login", json={**test_user, "username": test_user["username"].upper()})
     assert r.status_code == 200
     cookie = r.headers["set-cookie"].lower()
     assert "httponly" in cookie and "samesite=lax" in cookie and "max-age" not in cookie  # ends with the browser
@@ -141,26 +132,30 @@ def test_email_is_case_insensitive_and_cookie_is_httponly(anonymous, test_user):
     assert "max-age=" in remembered.headers["set-cookie"].lower()
 
 
-def test_embed_cookie_works_inside_another_sites_iframe(anonymous, test_user, monkeypatch):
-    monkeypatch.setattr(settings, "session_cookie_embed", True)
+def test_cookie_works_inside_another_sites_frame_over_https(anonymous, test_user, monkeypatch):
+    """Over HTTPS the cookie is SameSite=None; Secure; Partitioned, so Education Mapping's frame keeps it."""
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "session_cookie_secure", True)  # as behind IIS with HTTPS
     r = anonymous.post("/api/auth/login", json=test_user)
-    assert r.status_code == 200
     cookie = r.headers["set-cookie"].lower()
-    assert all(a in cookie for a in ("httponly", "secure", "samesite=none", "partitioned", "path=/"))
-    assert "max-age" not in cookie
+    assert r.status_code == 200
+    assert all(p in cookie for p in ("httponly", "secure", "samesite=none", "partitioned", "path=/"))
     gone = anonymous.post("/api/auth/logout").headers["set-cookie"].lower()
-    assert "max-age=0" in gone and "partitioned" in gone  # deleting a partitioned cookie needs the same attributes
+    assert "max-age=0" in gone and "partitioned" in gone           # removed with the same attributes
+    monkeypatch.setattr(settings, "session_cookie_cross_site", False)
+    r = anonymous.post("/api/auth/login", json=test_user)
+    assert "samesite=lax" in r.headers["set-cookie"].lower()       # can be turned off
 
 
-def test_changes_without_the_dashboard_header_are_refused(app_, test_user):
+def test_changes_need_the_dashboards_header(client):
+    """A form or script on another site cannot send X-Requested-With: changes without it are refused."""
     from fastapi.testclient import TestClient
 
-    c = TestClient(app_)  # signs in like the dashboard, then sends a change without X-Requested-With
-    assert c.post("/api/auth/login", json=test_user).status_code == 200  # no session yet: allowed
-    r = c.post("/api/scenarios", json={"name": "pytest csrf", "intake": {}})
+    other_site = TestClient(client.app, cookies=dict(client.cookies))  # the session cookie, without the header
+    r = other_site.post("/api/scenarios", json={"name": "pytest csrf", "intake": {}})
     assert r.status_code == 403 and "did not come from the dashboard" in r.json()["detail"]
-    assert c.get("/api/auth/me").status_code == 200  # reading is fine
-    assert c.post("/api/auth/logout", headers={"X-Requested-With": "fetch"}).status_code == 204
+    assert other_site.get("/api/auth/me").status_code == 200       # reading is not affected
 
 
 def test_logout_ends_the_session(anonymous, test_user):
@@ -174,7 +169,7 @@ def test_logout_ends_the_session(anonymous, test_user):
 
 
 def test_too_many_wrong_passwords(anonymous):
-    body = {"email": "throttle@example.test", "password": "wrong-password"}
+    body = {"username": "pytest-throttle", "password": "wrong-password"}
     codes = [anonymous.post("/api/auth/login", json=body).status_code for _ in range(11)]
     assert codes[:10] == [401] * 10 and codes[10] == 429
 

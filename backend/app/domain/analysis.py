@@ -55,15 +55,16 @@ CACHE = Path(os.environ.get("SCHOOL_CACHE_DIR", ROOT / "output" / ".cache")) / f
 STUDENTS = "Number of students"
 ROOM_ID = "test_code"  # cleaned physical room ID (see module docstring)
 
-# Level definitions, in display order. Capacity defaults to the brief's 45.
+# Level definitions, in display order. Capacity: 46 students per classroom for every level (the brief's 45 until
+# 2026-10-15).
 LEVELS = [
     # key,      label,              grades,                          capacity
-    ("NUR", "Pre-Primary",      ["N1", "N2", "N3"],                   45),
-    ("PRI", "Primary",          ["P1", "P2", "P3", "P4", "P5", "P6"], 45),
-    ("LSE", "Lower Secondary",  ["S1", "S2", "S3"],                   45),
-    ("USE", "Upper Secondary",  ["S4", "S5", "S6"],                   45),
-    ("TVE", "TVET",             ["L1", "L2", "L3", "L4", "L5"],       45),
-    ("TTC", "Professional Education", ["Y1", "Y2", "Y3"],             45),
+    ("NUR", "Pre-Primary",      ["N1", "N2", "N3"],                   46),
+    ("PRI", "Primary",          ["P1", "P2", "P3", "P4", "P5", "P6"], 46),
+    ("LSE", "Lower Secondary",  ["S1", "S2", "S3"],                   46),
+    ("USE", "Upper Secondary",  ["S4", "S5", "S6"],                   46),
+    ("TVE", "TVET",             ["L1", "L2", "L3", "L4", "L5"],       46),
+    ("TTC", "Professional Education", ["Y1", "Y2", "Y3"],             46),
 ]
 GRADE_TO_LEVEL = {g: label for _, label, grades, _ in LEVELS for g in grades}
 LEVEL_ORDER = [label for _, label, _, _ in LEVELS]

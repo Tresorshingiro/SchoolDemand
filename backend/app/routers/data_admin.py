@@ -24,7 +24,7 @@ XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
 
 def _names(session: Session) -> dict[int, str]:
-    return dict(session.execute(select(M.User.id, func.coalesce(M.User.full_name, M.User.email))).all())
+    return dict(session.execute(select(M.User.id, func.coalesce(M.User.full_name, M.User.username))).all())
 
 
 def _out(run: M.ImportRun, names: dict[int, str]) -> ImportOut:

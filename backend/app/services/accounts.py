@@ -6,23 +6,6 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from .. import models as M
-from .auth import hash_password, normalize_email
-
-
-def valid_email(email: str) -> str:
-    """Trimmed, lower-case email; 422 when it is not one."""
-    email = normalize_email(email)
-    local, _, domain = email.partition("@")
-    if not local or "." not in domain or " " in email:
-        raise HTTPException(422, "That is not an email address.")
-    return email
-
-
-def hash_or_422(password: str) -> str:
-    try:
-        return hash_password(password)
-    except ValueError as e:
-        raise HTTPException(422, str(e)) from None
 
 
 def check_admin_removal(session: Session, actor_id: int, target: M.User) -> None:

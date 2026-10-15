@@ -15,14 +15,9 @@ class ProjectionRequest(BaseModel):
 
 
 class LoginIn(BaseModel):
-    email: str = Field(min_length=3, max_length=254)
-    password: str = Field(min_length=1, max_length=1024)
+    username: str = Field(min_length=1, max_length=128, description="MINEDUC GIS portal username")
+    password: str = Field(min_length=1, max_length=1024, description="the portal password (checked by the portal)")
     remember: bool = Field(False, description="Stay signed in on this browser (remember_days) instead of one session")
-
-
-class PasswordChangeIn(BaseModel):
-    current_password: str = Field(min_length=1, max_length=1024)
-    new_password: str = Field(max_length=1024, description="at least 8 characters (checked by the route)")
 
 
 Role = Literal["admin", "viewer"]
@@ -31,10 +26,10 @@ Role = Literal["admin", "viewer"]
 class UserOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id: int
-    email: str
+    username: str
+    email: str | None
     full_name: str | None
     role: str
-    must_change_password: bool
 
 
 class AdminUserOut(UserOut):
@@ -43,21 +38,9 @@ class AdminUserOut(UserOut):
     last_login_at: datetime | None
 
 
-class UserCreateIn(BaseModel):
-    email: str = Field(min_length=3, max_length=254)
-    full_name: str | None = Field(None, max_length=100)
-    role: Role = "viewer"
-    password: str = Field(max_length=1024, description="temporary: the person chooses their own at first sign-in")
-
-
 class UserPatchIn(BaseModel):
-    full_name: str | None = Field(None, max_length=100)
     role: Role | None = None
     is_active: bool | None = None
-
-
-class PasswordSetIn(BaseModel):
-    password: str = Field(max_length=1024)
 
 
 class ImportOut(BaseModel):
@@ -87,7 +70,7 @@ class AuditOut(BaseModel):
     id: int
     at: datetime
     user_id: int | None
-    user_email: str | None
+    user_username: str | None
     user_name: str | None
     action: str
     target: str

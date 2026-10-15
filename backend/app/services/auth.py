@@ -1,9 +1,11 @@
 """
-Sign-in with email and password.
+Sign-in with a MINEDUC GIS portal account (username and password, checked by the portal: services/portal.py).
 
-Passwords are stored as argon2id hashes. A successful sign-in creates a session: a random token sent to the browser
-in an HttpOnly cookie, stored in the database only as its SHA-256, so a copy of the database does not let anyone sign
-in. Signing out deletes the session. Repeated wrong passwords for one email are refused for a while.
+Every portal user can sign in. The first sign-in adds the person to `users` as an administrator; after that an
+administrator can make them a viewer or disable them in the admin portal, and the portal keeps their password. A
+successful sign-in creates a session: a random token sent to the browser in an HttpOnly cookie, stored in the database
+only as its SHA-256, so a copy of the database does not let anyone sign in. Signing out deletes the session. Repeated
+wrong passwords for one username are refused for a while (before they reach the portal).
 """
 from __future__ import annotations
 
@@ -14,8 +16,6 @@ import time
 from collections import defaultdict, deque
 from datetime import datetime, timedelta, timezone
 
-from argon2 import PasswordHasher
-from argon2.exceptions import InvalidHashError, VerificationError
 from fastapi import Depends, HTTPException, Request
 from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
@@ -23,30 +23,12 @@ from sqlalchemy.orm import Session
 from .. import models as M
 from ..config import settings
 from ..db import get_session
+from . import portal
+from .audit import audit
 
 COOKIE = "sp_session"
-MIN_PASSWORD = 8
-MAX_FAILURES, FAILURE_WINDOW = 10, 15 * 60  # wrong passwords per email, seconds
-
-_hasher = PasswordHasher()
-_DUMMY_HASH = _hasher.hash("not a real password")  # verified for unknown emails so both answers take as long
-
-
-def hash_password(password: str) -> str:
-    if len(password) < MIN_PASSWORD:
-        raise ValueError(f"The password must have at least {MIN_PASSWORD} characters.")
-    return _hasher.hash(password)
-
-
-def verify_password(password_hash: str, password: str) -> bool:
-    try:
-        return _hasher.verify(password_hash, password)
-    except (VerificationError, InvalidHashError):
-        return False
-
-
-def normalize_email(email: str) -> str:
-    return email.strip().lower()
+MAX_FAILURES, FAILURE_WINDOW = 10, 15 * 60  # wrong passwords per username, seconds
+NEW_USER_ROLE = "admin"  # every portal user is an administrator at first sign-in
 
 
 def _token_hash(token: str) -> str:
@@ -58,28 +40,45 @@ _failures: dict[str, deque[float]] = defaultdict(deque)
 _failures_lock = threading.Lock()
 
 
-def _recent_failures(email: str, now: float) -> deque[float]:
-    q = _failures[email]
+def _recent_failures(key: str, now: float) -> deque[float]:
+    q = _failures[key]
     while q and q[0] < now - FAILURE_WINDOW:
         q.popleft()
     return q
 
 
-def authenticate(session: Session, email: str, password: str) -> M.User:
-    """The active user with this email and password; 401 otherwise, 429 after too many wrong passwords."""
-    email = normalize_email(email)
+def find_user(session: Session, username: str) -> M.User | None:
+    """The account of a portal username (the portal ignores case, so do we)."""
+    return session.scalar(select(M.User).where(func.lower(M.User.username) == username.strip().lower()))
+
+
+def authenticate(session: Session, username: str, password: str) -> M.User:
+    """The user whose portal username and password these are, added on first sign-in. 401 for a wrong password, 403
+    for an account disabled here, 429 after too many wrong passwords, 503 when the portal cannot be reached."""
+    username = username.strip()
+    key = username.lower()
     now = time.time()
     with _failures_lock:
-        if len(_recent_failures(email, now)) >= MAX_FAILURES:
+        if len(_recent_failures(key, now)) >= MAX_FAILURES:
             raise HTTPException(429, "Too many wrong passwords. Wait 15 minutes, then try again.")
-    user = session.scalar(select(M.User).where(M.User.email == email))
-    ok = verify_password(user.password_hash if user else _DUMMY_HASH, password)
-    if not (ok and user and user.is_active):
+    try:
+        p = portal.sign_in(username, password)
+    except portal.WrongCredentials:
         with _failures_lock:
-            _recent_failures(email, now).append(now)
-        raise HTTPException(401, "Wrong email or password.")
+            _recent_failures(key, now).append(now)
+        raise HTTPException(401, "Wrong username or password.") from None
     with _failures_lock:
-        _failures.pop(email, None)
+        _failures.pop(key, None)
+
+    user = find_user(session, p.username)
+    if user is None:
+        user = M.User(username=p.username, role=NEW_USER_ROLE, is_active=True)
+        session.add(user)
+        session.flush()
+        audit(session, user, "user.first_sign_in", p.username, {"role": NEW_USER_ROLE})
+    elif not user.is_active:
+        raise HTTPException(403, "Your account is disabled in School Demand. Ask an administrator to enable it.")
+    user.username, user.full_name, user.email = p.username, p.full_name or user.full_name, p.email
     return user
 
 
@@ -102,33 +101,39 @@ def end_session(session: Session, token: str | None) -> None:
         session.commit()
 
 
-def _embed_cookie(value: str, max_age: int | None) -> str:
-    """The cookie for a dashboard inside another site's iframe. Written by hand: Starlette writes Partitioned only on
-    Python 3.14+."""
+def _secure(request: Request) -> bool:
+    return request.url.scheme == "https" if settings.session_cookie_secure is None else settings.session_cookie_secure
+
+
+def _cross_site(request: Request) -> bool:
+    """Cookie usable inside another site's frame (SameSite=None; Secure; Partitioned): needs HTTPS."""
+    secure = _secure(request)
+    return secure if settings.session_cookie_cross_site is None else settings.session_cookie_cross_site and secure
+
+
+def _cross_site_cookie(value: str, max_age: int | None) -> str:
+    """Written by hand: Starlette writes Partitioned only on Python 3.14+."""
     age = [] if max_age is None else [f"Max-Age={max_age}"]
     return "; ".join([f"{COOKIE}={value}", *age, "Path=/", "HttpOnly", "Secure", "SameSite=None", "Partitioned"])
 
 
 def set_cookie(request: Request, response, token: str, max_age: int | None) -> None:
-    if settings.session_cookie_embed:
-        response.headers.append("set-cookie", _embed_cookie(token, max_age))
+    if _cross_site(request):
+        response.headers.append("set-cookie", _cross_site_cookie(token, max_age))
         return
-    secure = settings.session_cookie_secure
-    if secure is None:
-        secure = request.url.scheme == "https"
-    response.set_cookie(COOKIE, token, max_age=max_age, httponly=True, secure=secure, samesite="lax", path="/")
+    response.set_cookie(COOKIE, token, max_age=max_age, httponly=True, secure=_secure(request), samesite="lax", path="/")
 
 
-def clear_cookie(response) -> None:
-    if settings.session_cookie_embed:
-        response.headers.append("set-cookie", _embed_cookie('""', 0))
+def clear_cookie(request: Request, response) -> None:
+    if _cross_site(request):  # removed with the same attributes it was set with
+        response.headers.append("set-cookie", _cross_site_cookie('""', 0))
         return
     response.delete_cookie(COOKIE, path="/")
 
 
 # Requests that change something must come from the dashboard's own code (api.ts sends this header). A form or a
-# script on another site cannot add it to a request that carries the session cookie, so a cookie sent from other
-# sites (session_cookie_embed) cannot be used to act on someone's behalf.
+# script on another site cannot add it to a request that carries the session cookie, so a cookie that is also sent
+# from other sites (SameSite=None) cannot be used to act on someone's behalf.
 CSRF_HEADER = "X-Requested-With"
 SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
 
@@ -138,12 +143,9 @@ def csrf_refused(request: Request) -> bool:
             and request.headers.get(CSRF_HEADER) != "fetch")
 
 
-def end_user_sessions(session: Session, user_id: int, keep_token: str | None = None) -> None:
-    """Sign a user out everywhere (except the browser holding `keep_token`)."""
-    q = delete(M.UserSession).where(M.UserSession.user_id == user_id)
-    if keep_token:
-        q = q.where(M.UserSession.token_hash != _token_hash(keep_token))
-    session.execute(q)
+def end_user_sessions(session: Session, user_id: int) -> None:
+    """Sign a user out everywhere."""
+    session.execute(delete(M.UserSession).where(M.UserSession.user_id == user_id))
 
 
 def session_user(request: Request, session: Session) -> M.User | None:
@@ -157,21 +159,11 @@ def session_user(request: Request, session: Session) -> M.User | None:
     )
 
 
-def signed_in_user(request: Request, session: Session = Depends(get_session)) -> M.User:
-    """FastAPI dependency: the signed-in user, or 401 — even one who must still change their password."""
+def current_user(request: Request, session: Session = Depends(get_session)) -> M.User:
+    """FastAPI dependency: the signed-in user, or 401."""
     user = session_user(request, session)
     if user is None:
         raise HTTPException(401, "Please sign in.")
-    return user
-
-
-PASSWORD_CHANGE_REQUIRED = "password_change_required"  # the dashboard recognises this detail
-
-
-def current_user(user: M.User = Depends(signed_in_user)) -> M.User:
-    """FastAPI dependency: the signed-in user; 403 until a temporary password has been changed."""
-    if user.must_change_password:
-        raise HTTPException(403, PASSWORD_CHANGE_REQUIRED)
     return user
 
 
