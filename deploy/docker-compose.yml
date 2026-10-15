@@ -3,7 +3,7 @@
 #   cp deploy/.env.example deploy/.env        (then edit the passwords)
 #   docker compose -f deploy/docker-compose.yml --env-file deploy/.env up -d --build
 #   docker compose -f deploy/docker-compose.yml --env-file deploy/.env run --rm api python -m etl.load_version2
-#   -> http://localhost:5173/school-demand/
+#   -> http://localhost:8080
 #
 # Development: start only the database (`up -d db`) and run the API / dashboard from source (see backend/README.md).
 name: school-planning
@@ -52,7 +52,7 @@ services:
     depends_on:
       - api
     ports:
-      - "${WEB_PORT:-5173}:80"
+      - "${WEB_PORT:-8080}:80"
 
 volumes:
   pgdata:
