@@ -43,14 +43,16 @@ the files in `data-sources/` (mounted read-only); files uploaded in the admin po
    ..\deploy\windows\install-api-service.ps1 -Nssm C:\tools\nssm\win64\nssm.exe   # as Administrator
    ```
    The API then runs as the Windows service *SchoolPlanningAPI* on `127.0.0.1:8000` (logs in `backend\logs`).
-3. **Dashboard** — build it once (on any PC with Node 20+): `cd dashboard; npm ci; npm run build`. In IIS, create a
-   site whose folder holds `dashboard\dist\*` plus `deploy\windows\web.config`. Install the IIS modules
+3. **Dashboard** — build it once (on any PC with Node 20+): `cd dashboard; npm ci; npm run build`. It is built for
+   the sub-path `/school/`, so in IIS create an application named `school` whose folder holds `dashboard\dist\*` plus
+   `deploy\windows\web.config`. Install the IIS modules
    *URL Rewrite* and *Application Request Routing*, and tick **Enable proxy** in ARR → Server Proxy Settings; the
    `web.config` then forwards `/api` to the service and sends the page addresses (`/login`, `/dashboard` …) to
    `index.html`.
 
-If the site lives under a sub-path (an IIS application such as `https://server/school/`), build it with that path:
-`$env:VITE_BASE='/school/'; npm run build` — the pages and the API (`/school/api`) then work under it. If the API is on
+The build lives under the sub-path `/school/` (an IIS application such as `https://server/school/`): the pages and the
+API (`/school/api`) work under it. For another path, or the root of a site, build with it:
+`$env:VITE_BASE='/'; npm run build` (the Docker image does this for its nginx). If the API is on
 another host, build with `VITE_API_URL` (e.g. `https://api-server/api`) and set `CORS_ORIGINS` for the API; the sign-in
 cookie then needs both on the same site (same domain).
 

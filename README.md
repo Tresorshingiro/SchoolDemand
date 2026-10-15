@@ -31,7 +31,7 @@ cd backend
 .venv\Scripts\python -m etl.load_version2                                    # load data-sources/ (≈30 s)
 .venv\Scripts\python -m uvicorn app.main:app --reload                        # API on :8000, docs /api/docs
 cd ..\dashboard
-npm install; npm run dev                                                     # http://localhost:5173
+npm install; npm run dev                                                     # http://localhost:5173/school/
 ```
 
 First time: `copy deploy\.env.example deploy\.env` (set a password) and create the Python environment — see
