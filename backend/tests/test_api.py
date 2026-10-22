@@ -10,6 +10,7 @@ def test_health(client):
     body = client.get("/api/health").json()
     assert body["status"] == "ok" and body["database"] == "ok"
     assert body["data"]["class_groups"] > 0
+    assert "import_run" not in body["data"]  # public: no file names, no names of who published them
 
 
 def test_dataset_shapes(client):

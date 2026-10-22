@@ -10,13 +10,30 @@ from pydantic import BaseModel, ConfigDict, Field
 Intake = dict[str, dict[str, list[int]]]
 
 
+class PlannedSchoolIn(BaseModel):
+    """A new school placed on the map (domain/new_schools.py)."""
+    name: str = Field(min_length=1, max_length=100)
+    latitude: float = Field(ge=-90, le=90)
+    longitude: float = Field(ge=-180, le=180)
+    levels: dict[str, int] = Field(description="level key (NUR, PRI, LSE, USE, TVE, TTC) -> classrooms; one level, "
+                                               "or NUR and PRI together")
+    opening_year: int = Field(description="first school year it takes students (a projected year)")
+    walking_km: float = Field(gt=0, le=20, description="radius of the schools it takes extra students from")
+
+
 class ProjectionRequest(BaseModel):
     intake: Intake | None = Field(None, description="Intake plan; missing districts / grades take the default plan")
+    schools: list[PlannedSchoolIn] | None = Field(None, max_length=50, description="Planned new schools")
 
 
 class LoginIn(BaseModel):
     username: str = Field(min_length=1, max_length=128, description="MINEDUC GIS portal username")
     password: str = Field(min_length=1, max_length=1024, description="the portal password (checked by the portal)")
+    remember: bool = Field(False, description="Stay signed in on this browser (remember_days) instead of one session")
+
+
+class PortalTokenIn(BaseModel):
+    token: str = Field(min_length=1, max_length=4096, description="the signed-in portal user's token (oauth2/platformSelf)")
     remember: bool = Field(False, description="Stay signed in on this browser (remember_days) instead of one session")
 
 
@@ -100,3 +117,27 @@ class ScenarioCopyIn(BaseModel):
 
 class ScenarioOut(ScenarioSummary):
     intake: Intake
+
+
+class SchoolPlanIn(BaseModel):
+    name: str = Field(min_length=1, max_length=100)
+    description: str | None = Field(None, max_length=2000)
+    schools: list[PlannedSchoolIn] = Field(min_length=1, max_length=50)
+    intake: Intake | None = Field(None, description="the intake plan on screen, for the saved summary")
+
+
+class SchoolPlanSummary(BaseModel):
+    id: int
+    name: str
+    description: str | None
+    created_by: str | None
+    created_at: datetime
+    updated_at: datetime
+    base_year: int
+    archived: bool = Field(description="made for an older base year: readable, copy it to the current years to use it")
+    schools: int = Field(description="number of planned schools")
+    summary: dict | None = Field(description="what the plan changed when it was saved (new_schools.summary)")
+
+
+class SchoolPlanOut(SchoolPlanSummary):
+    plan_schools: list[PlannedSchoolIn]

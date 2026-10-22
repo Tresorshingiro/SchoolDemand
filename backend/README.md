@@ -12,7 +12,7 @@ backend/
                        school year, ready-made JSON, projection cache), auth.py (sessions, roles), portal.py (sign-in
                        through the MINEDUC GIS portal), audit.py
     routers/           system (health, reload), auth, data (school years + boundaries), projection, scenarios,
-                       admin (users, audit log), data_admin (uploads, imports)
+                       school_plans (planned new schools), admin (users, audit log), data_admin (uploads, imports)
     users.py           manage user accounts (python -m app.users ...)
   alembic/             database migrations
   etl/load_version2.py loads data-sources/ through the same pipeline as the admin portal
@@ -37,11 +37,11 @@ docker compose -f ..\deploy\docker-compose.yml --env-file ..\deploy\.env up -d d
 Everyone signs in with their **MINEDUC GIS portal** account (`PORTAL_URL`, default
 `https://gh.space.gov.rw/portal`): the API sends the username and password to the portal's `generateToken`, asks the
 portal who the token belongs to (`community/self`), and drops the portal token. No password is stored here, and there
-are no accounts to create: a portal user who signs in for the first time is added to `users` as an **admin**, with the
+are no accounts to create: a portal user who signs in for the first time is added to `users` as a **viewer**, with the
 name and email of their portal profile (refreshed at each sign-in). There are two roles: **admins** manage accounts
 (admin portal, `/admin`), the data and saved plans; **viewers** see all the data and can try plans but not save them.
-An admin can make someone a viewer or disable them in the admin portal; that is kept at their next sign-ins. Passwords
-are changed and reset in the portal. From the command line:
+An admin makes someone an admin, a viewer again, or disables them in the admin portal; that is kept at their next
+sign-ins. Passwords are changed and reset in the portal. From the command line:
 
 ```powershell
 .venv\Scripts\python -m app.users role jdoe viewer      # or admin
@@ -49,12 +49,24 @@ are changed and reset in the portal. From the command line:
 .venv\Scripts\python -m app.users list
 ```
 
+**Single sign-on.** When the dashboard is served from the portal's own site (`https://gh.space.gov.rw/school/`, also
+inside Education Mapping's frame), a page that needs a session goes through the portal's OAuth sign-in
+(`oauth2/authorize`, authorization code with PKCE) for the dashboard's application item in the portal (client ID
+`zCxgnSvJJTL8iCD1`; its redirect URLs list `https://gh.space.gov.rw/school/`). Someone already signed in to the portal
+comes straight back — the first time the portal asks them to Allow the app, unless a portal administrator approved it
+for the organization. The dashboard exchanges the code for a token (`oauth2/token`) and sends it to
+`POST /api/auth/portal-token`; the API asks `community/self` whose it is and opens the same session as a password
+sign-in. Elsewhere (gis.mineduc.gov.rw, development) the form is used. Signing out turns the portal sign-in off for
+that tab until "Continue with my GIS portal sign-in" on the sign-in page. Dashboard settings: `VITE_PORTAL_URL`,
+`VITE_PORTAL_CLIENT_ID` (defaults above). (`oauth2/platformSelf`, which would skip the redirect, refuses the app:
+OAUTH_0068 "Invalid client_id".)
+
 The API must reach the portal over HTTPS; when it cannot, sign-in answers 503. Signing in sets an HttpOnly cookie
 (`sp_session`, SameSite=Lax, Secure over HTTPS) holding a random token; the database keeps only its SHA-256
 (`user_sessions`). A session lasts until the browser closes (at most `SESSION_HOURS`, 12) or, with "Remember me",
 `REMEMBER_DAYS` (30). Ten wrong passwords for one username within 15 minutes block that username here for 15 minutes
 (before the portal locks the account). Every route except `/api/health` and `/api/auth/login` answers 401 without a
-session; changing saved plans and `/api/admin/*` answer 403 for viewers. Saved plans record who created them; admin
+session (`/api/auth/portal-token` neither); changing saved plans and `/api/admin/*` answer 403 for viewers. Saved plans record who created them; admin
 actions and first sign-ins are recorded in `audit_log`.
 
 The database connection comes from `DATABASE_URL`, or is built from `deploy/.env` (POSTGRES_USER / PASSWORD / DB,
@@ -64,8 +76,9 @@ host localhost, port 5433). For another database copy `.env.example` to `.env`.
 
 | Method | Path | |
 |---|---|---|
-| GET | `/api/health` | API, database and the loaded import (no sign-in needed) |
+| GET | `/api/health` | API, database, the school years and class streams loaded (no sign-in needed: no file or person names) |
 | POST | `/api/auth/login` | `{"username", "password", "remember"}` (MINEDUC GIS portal account) → sets the session cookie |
+| POST | `/api/auth/portal-token` | `{"token", "remember"}`: the signed-in portal user's token (single sign-on) → sets the session cookie |
 | POST | `/api/auth/logout` | ends the session |
 | GET | `/api/auth/me` | the signed-in user (401 when not signed in) |
 | GET | `/api/meta` | levels, grades, capacity, source, data-quality counts, school years (`actualYears`, `baseYear`, `projectionYears`), live `sources` |
@@ -76,9 +89,12 @@ host localhost, port 5433). For another database copy `.env.example` to `.env`.
 | GET | `/api/boundaries/{country,districts,sectors}` | GeoJSON outlines (PostGIS) |
 | GET | `/api/projection/config` | years, levels, how new students enter, the default intake plan |
 | GET | `/api/projection/default` | the projection with the default (catchment) plan |
-| POST | `/api/projection/run` | the projection for `{"intake": {"N1": {"Gasabo": [2027, 2028, 2029, 2030], …}}}` |
+| POST | `/api/projection/run` | the projection for `{"intake": {"N1": {"Gasabo": [2027, 2028, 2029, 2030], …}}, "schools": [planned new schools]}`; a planned school is `{"name", "latitude", "longitude", "levels": {"PRI": 12}, "opening_year", "walking_km"}` (one level, or NUR + PRI) and appears in the rows as code -1, -2 …, described in `planned` |
 | GET / POST | `/api/scenarios` | saved intake plans: list (any user) / save a new one (admins) |
 | GET / PUT / DELETE | `/api/scenarios/{id}` | open (any user) / update / delete (admins) a saved plan |
+| GET / POST | `/api/school-plans` | saved plans of new schools: list (any user) / save a new one (admins; the summary of what it changes is stored with it) |
+| GET / PUT / DELETE | `/api/school-plans/{id}` | open (any user) / update / delete (admins) a plan of new schools |
+| POST | `/api/school-plans/{id}/copy` | admin: copy an archived plan of new schools into the current years |
 | GET | `/api/admin/users` | admin: everyone who has signed in |
 | PATCH | `/api/admin/users/{id}` | admin: `{"role", "is_active"}` |
 | GET | `/api/admin/audit` | admin: who changed what, newest first (`limit`, `before`, `user_id`, `action`) |

@@ -1,7 +1,7 @@
 """Integration tests: they need the database with an import loaded (python -m etl.load_version2).
 
 The MINEDUC GIS portal is replaced by a fake one (fake_sign_in): it knows every username starting with "pytest-",
-with the password PORTAL_PASSWORD.
+with the password PORTAL_PASSWORD, and the token PORTAL_TOKEN + username (fake_user_of_token, single sign-on).
 """
 import secrets
 from types import SimpleNamespace
@@ -15,6 +15,7 @@ from app.db import SessionLocal, engine
 from app.services import portal
 
 TEST_USERNAME, PORTAL_PASSWORD = "pytest-user", "portal-password-123"
+PORTAL_TOKEN = "portal-token-for:"  # + username: a token the fake portal accepts
 PYTEST_USERS = "pytest-%"  # every account the tests create matches this
 PORTAL_NAMES = {TEST_USERNAME: "Pytest User"}
 
@@ -24,6 +25,14 @@ def fake_sign_in(username: str, password: str) -> portal.PortalUser:
     if not username.lower().startswith("pytest-") or password != PORTAL_PASSWORD:
         raise portal.WrongCredentials("Invalid username or password.")
     name = username.lower()
+    return portal.PortalUser(name, PORTAL_NAMES.get(name), f"{name}@example.test")
+
+
+def fake_user_of_token(token: str) -> portal.PortalUser:
+    """The fake portal's community/self: PORTAL_TOKEN + a pytest- username, else an invalid token."""
+    name = token.removeprefix(PORTAL_TOKEN).lower()
+    if not token.startswith(PORTAL_TOKEN) or not name.startswith("pytest-"):
+        raise portal.WrongCredentials("Invalid token.")
     return portal.PortalUser(name, PORTAL_NAMES.get(name), f"{name}@example.test")
 
 
@@ -42,10 +51,10 @@ def _database_ready() -> bool:
 
 @pytest.fixture(scope="session", autouse=True)
 def _fake_portal():
-    real = portal.sign_in
-    portal.sign_in = fake_sign_in
+    real = portal.sign_in, portal.user_of_token
+    portal.sign_in, portal.user_of_token = fake_sign_in, fake_user_of_token
     yield
-    portal.sign_in = real
+    portal.sign_in, portal.user_of_token = real
 
 
 @pytest.fixture(scope="session", autouse=True)

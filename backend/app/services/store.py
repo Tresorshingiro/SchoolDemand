@@ -11,13 +11,14 @@ import json
 import threading
 import time
 from collections import OrderedDict
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 
 import pandas as pd
 
 from ..config import settings
 from ..db import SessionLocal
 from ..domain import dashboard as D
+from ..domain import new_schools as NS
 from ..domain import projection as P
 from . import repository as R
 
@@ -51,8 +52,9 @@ class Snapshot:
         return self.rosters[self.horizon.base]
 
 
-def plan_key(intake: dict[str, dict[str, list[int]]] | None) -> str:
-    return hashlib.sha1(json.dumps(intake or {}, sort_keys=True).encode()).hexdigest()
+def plan_key(intake: dict[str, dict[str, list[int]]] | None, planned: tuple[NS.PlannedSchool, ...] = ()) -> str:
+    key = {"intake": intake or {}, "schools": [asdict(s) for s in planned]} if planned else intake or {}
+    return hashlib.sha1(json.dumps(key, sort_keys=True).encode()).hexdigest()
 
 
 def intake_frames(intake: dict[str, dict[str, list[int]]], horizon: P.Horizon) -> dict[str, pd.DataFrame]:
@@ -134,15 +136,16 @@ class Store:
             raise KeyError(f"No data for {y}: the school years are {', '.join(str(k) for k in snap.rosters)}.")
         return snap.payloads[f"{name}/{y}"]
 
-    def projection(self, intake: dict[str, dict[str, list[int]]] | None) -> Payload:
-        """The projection for an intake plan (None = the default catchment plan), cached."""
-        key = plan_key(intake)
+    def projection(self, intake: dict[str, dict[str, list[int]]] | None,
+                   planned: tuple[NS.PlannedSchool, ...] = ()) -> Payload:
+        """The projection for an intake plan (None = the default catchment plan) and planned new schools, cached."""
+        key = plan_key(intake, planned)
         with self._lock:
             if key in self._runs:
                 self._runs.move_to_end(key)
                 return self._runs[key]
             snap = self.snapshot
-        result = self._compute(snap, intake)
+        result = self._compute(snap, intake, planned)
         with self._lock:
             if self._snap is snap:  # not reloaded meanwhile
                 self._runs[key] = result
@@ -150,11 +153,24 @@ class Store:
                     self._runs.popitem(last=False)
         return result
 
+    def frames(self, intake: dict[str, dict[str, list[int]]] | None,
+               planned: tuple[NS.PlannedSchool, ...] = ()) -> tuple[pd.DataFrame, ...]:
+        """One projection run as data frames (info, schools, grades, combos), not cached."""
+        return self._frames(self.snapshot, intake, planned)
+
     @staticmethod
-    def _compute(snap: Snapshot, intake: dict[str, dict[str, list[int]]] | None) -> Payload:
-        _, schools, grades, combos = P.project(snap.roster, intake_frames(intake or snap.default_intake, snap.horizon),
-                                               catchment=snap.catchment, base=snap.base, horizon=snap.horizon)
-        return Payload.of(D.encode_projection(schools, grades, combos, snap.horizon))
+    def _frames(snap: Snapshot, intake: dict[str, dict[str, list[int]]] | None,
+                planned: tuple[NS.PlannedSchool, ...] = ()) -> tuple[pd.DataFrame, ...]:
+        return NS.project(snap.roster, intake_frames(intake or snap.default_intake, snap.horizon), planned,
+                          catchment=snap.catchment, base=snap.base, horizon=snap.horizon)
+
+    @classmethod
+    def _compute(cls, snap: Snapshot, intake: dict[str, dict[str, list[int]]] | None,
+                 planned: tuple[NS.PlannedSchool, ...] = ()) -> Payload:
+        _, schools, grades, combos = cls._frames(snap, intake, planned)
+        rings = NS.rings(NS.with_planned(snap.base, planned), planned) if planned else []
+        return Payload.of({**D.encode_projection(schools, grades, combos, snap.horizon),
+                           "planned": D.encode_planned(planned, rings)})
 
 
 store = Store()

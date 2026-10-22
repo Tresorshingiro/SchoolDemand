@@ -6,7 +6,8 @@ from fastapi import HTTPException
 
 from app.services import portal
 
-SIGN_IN = portal.sign_in  # the real one: conftest swaps the module's for a fake portal once the tests start
+SIGN_IN = portal.sign_in  # the real ones: conftest swaps the module's for a fake portal once the tests start
+USER_OF_TOKEN = portal.user_of_token
 
 
 def answers(token_answer: dict, self_answer: dict | None = None):
@@ -35,6 +36,29 @@ def test_refused_password(monkeypatch):
     with pytest.raises(portal.WrongCredentials, match="Invalid username or password"):
         SIGN_IN("jdoe", "wrong")
     assert len(calls) == 1
+
+
+def test_user_of_a_token(monkeypatch):
+    post, calls = answers({}, {"username": "JDoe", "fullName": "Jane Doe", "email": "jane@example.test"})
+    monkeypatch.setattr(portal, "_post", post)
+    assert USER_OF_TOKEN("tok") == portal.PortalUser("JDoe", "Jane Doe", "jane@example.test")
+    assert calls == [("community/self", {"token": "tok"})]
+
+
+@pytest.mark.parametrize("code", [498, 499, 403])
+def test_refused_token(monkeypatch, code):
+    post, _ = answers({}, {"error": {"code": code, "message": "Invalid token."}})
+    monkeypatch.setattr(portal, "_post", post)
+    with pytest.raises(portal.WrongCredentials):
+        USER_OF_TOKEN("expired")
+
+
+def test_token_answer_without_a_user(monkeypatch):
+    post, _ = answers({}, {"something": "else"})
+    monkeypatch.setattr(portal, "_post", post)
+    with pytest.raises(HTTPException) as e:
+        USER_OF_TOKEN("tok")
+    assert e.value.status_code == 503
 
 
 def test_unreachable_portal(monkeypatch):

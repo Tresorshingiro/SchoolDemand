@@ -16,7 +16,7 @@ from ..services.store import store
 router = APIRouter(tags=["system"])
 
 
-@router.get("/health", summary="API, database and loaded data")
+@router.get("/health", summary="API, database and loaded data (no sign-in needed, so no file or person names)")
 def health() -> dict:
     try:
         with engine.connect() as conn:
@@ -28,8 +28,8 @@ def health() -> dict:
     return {
         "status": "ok" if db == "ok" and snap else "degraded",
         "database": db,
-        "data": {"import_run": snap.import_run, "class_groups": len(snap.roster), "years": list(snap.rosters)}
-        if snap else None,
+        # The live files and who published them are in /api/meta (sources), for signed-in users
+        "data": {"class_groups": len(snap.roster), "years": list(snap.rosters)} if snap else None,
     }
 
 

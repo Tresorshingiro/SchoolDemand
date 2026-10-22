@@ -67,6 +67,14 @@ def read_nisr(session: Session) -> pd.DataFrame:
     return t.pivot_table(index="district", columns="year", values="population", aggfunc="sum").astype(float)
 
 
+def locate(session: Session, lat: float, lon: float) -> tuple[str, str] | None:
+    """(district, sector) of the sector containing the point, None outside every sector."""
+    row = session.execute(text(
+        "SELECT d.name, s.name FROM sectors s JOIN districts d ON d.id = s.district_id "
+        "WHERE ST_Contains(s.geom, ST_SetSRID(ST_MakePoint(:lon, :lat), 4326)) LIMIT 1"), {"lat": lat, "lon": lon}).first()
+    return (row[0], row[1]) if row else None
+
+
 def live_imports(session: Session) -> list[tuple[M.ImportRun, str | None]]:
     """The live data (one import per kind, per school year for school data) with the name of who published it."""
     return [(run, name) for run, name in session.execute(

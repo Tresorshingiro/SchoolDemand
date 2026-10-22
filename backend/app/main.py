@@ -15,7 +15,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from .config import settings
-from .routers import admin, auth, data, data_admin, projection, scenarios, system
+from .routers import admin, auth, data, data_admin, projection, scenarios, school_plans, system
 from .services.auth import csrf_refused
 from .services.store import store
 
@@ -63,6 +63,6 @@ if settings.cors_origins:
 
 # Everything except health, reload (admin token) and sign-in needs a signed-in user; /admin/* an administrator
 # (services/auth.py)
-for router in (system.router, auth.router, data.router, projection.router, scenarios.router, admin.router,
-               data_admin.router):
+for router in (system.router, auth.router, data.router, projection.router, scenarios.router, school_plans.router,
+               admin.router, data_admin.router):
     app.include_router(router, prefix="/api")

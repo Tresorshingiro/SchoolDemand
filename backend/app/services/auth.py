@@ -1,11 +1,14 @@
 """
 Sign-in with a MINEDUC GIS portal account (username and password, checked by the portal: services/portal.py).
 
-Every portal user can sign in. The first sign-in adds the person to `users` as an administrator; after that an
-administrator can make them a viewer or disable them in the admin portal, and the portal keeps their password. A
-successful sign-in creates a session: a random token sent to the browser in an HttpOnly cookie, stored in the database
-only as its SHA-256, so a copy of the database does not let anyone sign in. Signing out deletes the session. Repeated
-wrong passwords for one username are refused for a while (before they reach the portal).
+Every portal user can sign in. The first sign-in adds the person to `users` as a viewer; an administrator can make
+them an administrator or disable them in the admin portal (or `python -m app.users role <name> admin`), and the
+portal keeps their password. A successful sign-in creates a session: a random token sent to the browser in an HttpOnly
+cookie, stored in the database only as its SHA-256, so a copy of the database does not let anyone sign in. Signing out
+deletes the session. Repeated wrong passwords for one username are refused for a while (before they reach the portal).
+
+Single sign-on (authenticate_token): on the portal's own site the dashboard sends the signed-in portal user's token
+instead of a password; the portal says whose it is and the same account rules apply.
 """
 from __future__ import annotations
 
@@ -28,7 +31,7 @@ from .audit import audit
 
 COOKIE = "sp_session"
 MAX_FAILURES, FAILURE_WINDOW = 10, 15 * 60  # wrong passwords per username, seconds
-NEW_USER_ROLE = "admin"  # every portal user is an administrator at first sign-in
+NEW_USER_ROLE = "viewer"  # every portal user can sign in; an administrator gives the admin role
 
 
 def _token_hash(token: str) -> str:
@@ -69,7 +72,22 @@ def authenticate(session: Session, username: str, password: str) -> M.User:
         raise HTTPException(401, "Wrong username or password.") from None
     with _failures_lock:
         _failures.pop(key, None)
+    return _account(session, p)
 
+
+def authenticate_token(session: Session, token: str) -> M.User:
+    """The user a portal token belongs to (single sign-on), added on first sign-in. 401 when the portal refuses the
+    token, 403 for an account disabled here, 503 when the portal cannot be reached."""
+    try:
+        p = portal.user_of_token(token)
+    except portal.WrongCredentials:
+        raise HTTPException(401, "Your portal sign-in has ended. Sign in again.") from None
+    return _account(session, p)
+
+
+def _account(session: Session, p: portal.PortalUser) -> M.User:
+    """The account of a portal user the portal has just vouched for: added at the first sign-in, refused when disabled
+    here, name and email refreshed from the portal."""
     user = find_user(session, p.username)
     if user is None:
         user = M.User(username=p.username, role=NEW_USER_ROLE, is_active=True)

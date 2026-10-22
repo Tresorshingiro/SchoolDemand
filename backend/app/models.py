@@ -7,7 +7,7 @@ Additions to the design: `countries` (the outline the map masks outside of), `ca
 pre-primary school catchment — the GIS file gives school catchments, not the village x school shares of
 `school_catchments`), and `classrooms.source_classroom_id` (the roster's classroom_id; `mineduc_classroom_id`
 holds test_code, the cleaned room ID), `users` / `user_sessions` (sign-in to the dashboard, admin / viewer roles), `audit_log` (who changed what), `district_population` (NISR district totals), `classrooms.academic_year_id` (rooms per
-school year).
+school year), `school_plans` / `planned_schools` / `planned_school_levels` (saved plans of new schools).
 """
 from __future__ import annotations
 
@@ -284,6 +284,41 @@ class AuditLog(Base):
     action: Mapped[str] = mapped_column(String(40), comment="user.create, user.role, scenario.delete ...")
     target: Mapped[str] = mapped_column(String(200), comment="e.g. the user's email or the plan name")
     detail = mapped_column(JSONB, nullable=True)
+
+
+class SchoolPlan(Base):
+    """A saved set of planned new schools (domain/new_schools.py), separate from the intake plans: switched on or off
+    on the dashboard. `summary` keeps what the plan changed when it was saved."""
+    __tablename__ = "school_plans"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(String(100), unique=True)
+    description: Mapped[str | None] = mapped_column(Text)
+    base_year_id: Mapped[int] = mapped_column(ForeignKey("academic_years.id"))
+    created_by: Mapped[str | None] = mapped_column(String(100))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+    summary = mapped_column(JSONB, nullable=True, comment="classrooms short before / after, per level, area and year")
+
+
+class PlannedSchoolRow(Base):
+    """A planned new school of a school plan (never part of the actual data)."""
+    __tablename__ = "planned_schools"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    school_plan_id: Mapped[int] = mapped_column(ForeignKey("school_plans.id", ondelete="CASCADE"), index=True)
+    name: Mapped[str] = mapped_column(String(100))
+    opening_year: Mapped[int] = mapped_column(SmallInteger)
+    walking_km = mapped_column(Numeric(4, 1), nullable=False)
+    geom = mapped_column(Geometry("POINT", srid=4326), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class PlannedSchoolLevel(Base):
+    """Classrooms of a planned school per level: one level, or Pre-Primary and Primary."""
+    __tablename__ = "planned_school_levels"
+    planned_school_id: Mapped[int] = mapped_column(ForeignKey("planned_schools.id", ondelete="CASCADE"),
+                                                   primary_key=True)
+    level_id: Mapped[int] = mapped_column(ForeignKey("school_levels.id"), primary_key=True)
+    classrooms: Mapped[int] = mapped_column(SmallInteger)
 
 
 class ScenarioIntake(Base):

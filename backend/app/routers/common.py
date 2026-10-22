@@ -3,8 +3,11 @@ from __future__ import annotations
 
 from fastapi import HTTPException, Request
 from fastapi.responses import Response
+from sqlalchemy.orm import Session
 
-from ..schemas import Intake
+from ..domain import new_schools as NS
+from ..schemas import Intake, PlannedSchoolIn
+from ..services import repository as R
 from ..services.store import Payload, store
 
 
@@ -38,3 +41,24 @@ def complete_intake(intake: Intake | None) -> Intake:
                 raise HTTPException(422, f"{grade} / {district}: expected {n_years} whole numbers >= 0 ({years[0]}-{years[-1]}).")
             out[grade][district] = list(values)
     return out
+
+
+def complete_schools(schools: list[PlannedSchoolIn] | None, session: Session) -> tuple[NS.PlannedSchool, ...]:
+    """Validate planned new schools and place them in their district and sector."""
+    years = store.snapshot.horizon.future
+    out = []
+    for s in schools or []:
+        if not s.levels or any(k not in NS.LEVEL_KEYS for k in s.levels) \
+                or {NS.LEVEL_KEYS[k] for k in s.levels} not in NS.ALLOWED_LEVEL_SETS:
+            raise HTTPException(422, "A new school offers one level, or Pre-Primary and Primary together.")
+        if any(not 1 <= n <= 200 for n in s.levels.values()):
+            raise HTTPException(422, f"{s.name}: the number of classrooms must be between 1 and 200.")
+        if s.opening_year not in years:
+            raise HTTPException(422, f"The opening year must be between {years[0]} and {years[-1]}.")
+        place = R.locate(session, s.latitude, s.longitude)
+        if place is None:
+            raise HTTPException(422, "This point is outside Rwanda's sectors.")
+        classrooms = tuple((label, s.levels[k]) for k, label in NS.LEVEL_KEYS.items() if k in s.levels)
+        out.append(NS.PlannedSchool(s.name.strip(), s.latitude, s.longitude, place[0], place[1], classrooms,
+                                    s.opening_year, float(s.walking_km)))
+    return tuple(out)

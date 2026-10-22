@@ -7,8 +7,8 @@ the grades of a level every year — the same measures as the 2026 analysis
 (students, class groups, double shift, available, required, gap) for every
 school x level x grade x year.
 
-The dashboard runs the same algorithm in the browser (dashboard/src/projection.ts)
-so planners can type their own intake; keep the two in step.
+It runs only here, on the server; the dashboard sends its intake plan (and any planned new schools,
+domain/new_schools.py) and shows the result.
 
 Levels projected
 ----------------
@@ -88,6 +88,7 @@ from __future__ import annotations
 
 import math
 import re
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -283,12 +284,25 @@ def share_by_need(rooms: np.ndarray, need: np.ndarray) -> np.ndarray:
 
 
 # ---------------------------------------------------------------- projection
+@dataclass
+class YearState:
+    """A projected year's students and class groups once its new entrants are placed (the arrays project() works on;
+    an `after_intake` hook may change them in place)."""
+    year: int
+    students: np.ndarray                 # n x GRADES
+    groups: np.ndarray                   # n x GRADES
+    c_students: dict[str, np.ndarray]    # combination level -> n x grades of the level x combinations
+    c_groups: dict[str, np.ndarray]
+
+
 def project(roster: pd.DataFrame, intake: dict[str, pd.DataFrame] | None = None, *,
             catchment: pd.DataFrame | None = None, base: Base | None = None, horizon: Horizon = DEFAULT_HORIZON,
+            after_intake: Callable[[YearState], None] | None = None,
             ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """Run the projection. `intake` = {"N1": district x year}; default: the catchment totals (default_intake).
     `catchment` (school_code x horizon.future, see fill_catchment), `horizon` the base year and projection years and `base` (base_schools) default to the files / the
-    roster; the API passes them in, prepared once from the database.
+    roster; the API passes them in, prepared once from the database. `after_intake` is called for every projected
+    year once its new entrants are placed (planned new schools take their students there: new_schools.py).
 
     Returns (info, schools, grades, combos):
     info    one row per school (code, name, district, sector, coordinates)
@@ -374,6 +388,8 @@ def project(roster: pd.DataFrame, intake: dict[str, pd.DataFrame] | None = None,
                 c_students[label][:, 1:], c_groups[label][:, 1:] = prev_cs[:, :-1], prev_cg[:, :-1]
                 c_students[label][:, 0] = _largest_remainder(students[:, e], b.combo_students[label][:, 0])
                 c_groups[label][:, 0] = _largest_remainder(groups[:, e], b.combo_groups[label][:, 0])
+            if after_intake is not None:
+                after_intake(YearState(year, students, groups, c_students, c_groups))
 
         for label in COMBO_LEVELS:
             cs, cg = c_students[label], c_groups[label]

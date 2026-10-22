@@ -12,6 +12,7 @@ from datetime import date
 import pandas as pd
 
 from . import analysis as A
+from . import new_schools as NS
 from . import projection as P
 
 LEVEL_INDEX = {label: i for i, label in enumerate(A.LEVEL_ORDER)}
@@ -121,3 +122,13 @@ def encode_projection(schools: pd.DataFrame, grades: pd.DataFrame, combos: pd.Da
         "combos": {"names": names,
                    "rows": c[["year", "school_code", "k", "ni", "students", "class_groups"]].to_numpy().tolist()},
     }
+
+
+def encode_planned(planned, rings: list[dict[str, list[int]]]) -> list[dict]:
+    """The planned new schools of a run (codes -1, -2 ... in the rows): where they are, what they offer and the
+    existing schools in each level's ring."""
+    return [{"c": NS.planned_code(i), "n": s.name, "d": s.district, "s": s.sector, "y": s.latitude, "x": s.longitude,
+             "levels": [LEVEL_INDEX[label] for label, _ in s.classrooms],
+             "classrooms": [n for _, n in s.classrooms], "opening": s.opening_year, "km": s.walking_km,
+             "ring": {str(LEVEL_INDEX[label]): codes for label, codes in ring.items()}}
+            for i, (s, ring) in enumerate(zip(planned, rings))]

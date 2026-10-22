@@ -9,7 +9,7 @@ from app import models as M
 from app import users as users_cli
 from app.db import SessionLocal
 
-from .conftest import PORTAL_PASSWORD, browser
+from .conftest import PORTAL_PASSWORD, PORTAL_TOKEN, browser
 
 
 def audit_rows(action: str, target: str) -> list[M.AuditLog]:
@@ -28,16 +28,55 @@ def sign_in(app_, username: str, password: str = PORTAL_PASSWORD):
 
 
 # ---------------------------------------------------------------- portal accounts
-def test_first_sign_in_adds_an_administrator(app_):
+def test_first_sign_in_adds_a_viewer(app_):
     name = unique("new")
     c, r = sign_in(app_, name.upper())                              # the portal ignores case
     assert r.status_code == 200, r.text
     me = r.json()
-    assert me["username"] == name and me["role"] == "admin" and me["email"] == f"{name}@example.test"
-    assert c.get("/api/admin/users").status_code == 200              # an administrator straight away
-    assert audit_rows("user.first_sign_in", name)[0].detail == {"role": "admin"}
+    assert me["username"] == name and me["role"] == "viewer" and me["email"] == f"{name}@example.test"
+    assert c.get("/api/admin/users").status_code == 403              # an administrator gives the admin role
+    assert audit_rows("user.first_sign_in", name)[0].detail == {"role": "viewer"}
     _, again = sign_in(app_, name)                                   # the same account the next time
     assert again.json()["id"] == me["id"] and len(audit_rows("user.first_sign_in", name)) == 1
+
+
+# ---------------------------------------------------------------- single sign-on (portal token)
+def token_sign_in(app_, token: str):
+    c = browser(app_)
+    return c, c.post("/api/auth/portal-token", json={"token": token})
+
+
+def test_portal_token_signs_in(app_):
+    name = unique("sso")
+    c, r = token_sign_in(app_, PORTAL_TOKEN + name)
+    assert r.status_code == 200, r.text
+    assert r.json()["username"] == name and r.json()["role"] == "viewer"
+    assert c.get("/api/auth/me").json()["id"] == r.json()["id"]      # the session cookie is set
+    _, again = sign_in(app_, name)                                   # the same account as with the password
+    assert again.json()["id"] == r.json()["id"]
+
+
+def test_portal_token_keeps_the_role_set_here(viewer, client, app_):
+    _, r = token_sign_in(app_, PORTAL_TOKEN + viewer.username)
+    assert r.json()["role"] == "viewer"
+    _, r = token_sign_in(app_, PORTAL_TOKEN + "pytest-user")
+    assert r.json()["role"] == "admin"
+
+
+def test_portal_token_refused(app_):
+    _, r = token_sign_in(app_, "not-a-portal-token")
+    assert r.status_code == 401 and "sign in again" in r.json()["detail"].lower()
+    c, _ = token_sign_in(app_, "not-a-portal-token")
+    assert c.get("/api/auth/me").status_code == 401
+
+
+def test_portal_token_of_a_disabled_account(make_client, app_):
+    u = make_client("viewer")
+    with SessionLocal() as s:
+        s.execute(update(M.User).where(M.User.id == u.id).values(is_active=False))
+        s.commit()
+    _, r = token_sign_in(app_, PORTAL_TOKEN + u.username)
+    assert r.status_code == 403
 
 
 def test_role_set_here_is_kept_at_the_next_sign_in(viewer, app_):
