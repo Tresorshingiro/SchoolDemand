@@ -56,7 +56,7 @@ export default function SchoolPanel({ code, data, mode, onClose, context }: Prop
         <div className="min-w-0 flex-1">
           <h2 className="text-base font-semibold text-ink">{info.n}</h2>
           <p className="text-xs text-muted">
-            Code {info.c} · {info.d} district · {info.s} sector
+            {code < 0 ? 'Planned new school' : `Code ${info.c}`} · {info.d} district · {info.s} sector
             {info.x === null ? ' · no valid coordinates' : ''}
           </p>
           {context && <p className="mt-1 text-xs font-medium text-accent">{context}</p>}
@@ -73,7 +73,7 @@ export default function SchoolPanel({ code, data, mode, onClose, context }: Prop
               <tr className="border-b border-line text-left text-xs text-muted">
                 <th className="px-2 py-1.5 font-medium">Level</th>
                 <th className="px-2 py-1.5 text-right font-medium">Students</th>
-                <th className="px-2 py-1.5 text-right font-medium">Groups</th>
+                <th className="px-2 py-1.5 text-right font-medium">Streams</th>
                 <th className="px-2 py-1.5 text-right font-medium">Avail.</th>
                 <th className="px-2 py-1.5 text-right font-medium">Req.</th>
                 <th className="px-2 py-1.5 text-right font-medium">Gap</th>
@@ -101,7 +101,7 @@ export default function SchoolPanel({ code, data, mode, onClose, context }: Prop
               <tr className="border-b border-line text-left text-xs text-muted">
                 <th className="px-2 py-1.5 font-medium">Grade</th>
                 <th className="px-2 py-1.5 text-right font-medium">Students</th>
-                <th className="px-2 py-1.5 text-right font-medium">Groups</th>
+                <th className="px-2 py-1.5 text-right font-medium">Streams</th>
                 <th className="px-2 py-1.5 text-right font-medium">{hasFullDay ? 'Double shift / no room' : 'Double shift'}</th>
                 <th className="px-2 py-1.5 text-right font-medium">Avail.</th>
                 <th className="px-2 py-1.5 text-right font-medium">Req.</th>
@@ -133,7 +133,7 @@ export default function SchoolPanel({ code, data, mode, onClose, context }: Prop
                                 <li key={name} className="rounded-md border border-line px-2 py-1 text-xs">
                                   <span className="font-medium text-ink">{name}</span>
                                   <span className="num ml-1.5 text-ink2">
-                                    {fmt(cst)} st · {fmt(ccg)} {ccg === 1 ? 'group' : 'groups'}
+                                    {fmt(cst)} st · {fmt(ccg)} {ccg === 1 ? 'stream' : 'streams'}
                                     {need !== null && <> · needs {fmt(need)} {need === 1 ? 'room' : 'rooms'}</>}
                                   </span>
                                 </li>
@@ -152,7 +152,7 @@ export default function SchoolPanel({ code, data, mode, onClose, context }: Prop
             {context
               ? "Avail. = the school's rooms shared out to each grade this year."
               : 'A room shared by two grades counts in each grade, but once in the level total above.'}
-            {hasFullDay && ' Secondary, TVET and Professional Education study full day: no double shift, so that column counts class groups without a room, and every class group needs its own room (combinations never share).'}
+            {hasFullDay && ' Secondary, TVET and Professional Education study full day: no double shift, so that column counts class streams without a room, and every class stream needs its own room (combinations never share).'}
             {combos.size > 0 && (context
               ? ' Boxes: each combination; cohorts keep their combination, new entrants follow the 2026 mix.'
               : ' Boxes: each combination.')}
@@ -161,7 +161,12 @@ export default function SchoolPanel({ code, data, mode, onClose, context }: Prop
 
         <section>
           <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted">Data quality</h3>
-          {issues.length ? (
+          {code < 0 ? (
+            <p className="text-sm text-muted">
+              A planned school, not in the school data: from its opening year it takes the extra students of the crowded
+              schools nearby, up to its own classrooms.
+            </p>
+          ) : issues.length ? (
             <ul className="space-y-1 text-sm text-ink2">
               {issues.map(([issue, n]) => (
                 <li key={issue} className="flex justify-between gap-3">

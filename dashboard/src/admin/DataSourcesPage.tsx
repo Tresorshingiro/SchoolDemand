@@ -8,7 +8,7 @@ import { Alert, PageHeader, Panel, Pill, btn } from './ui';
 const day = new Intl.DateTimeFormat('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
 
 export const KIND_INFO: Record<DataKind, { icon: LucideIcon; text: string }> = {
-  school_data: { icon: School, text: 'Schools, rooms and class groups of a school year. The newest year is the base of the projection.' },
+  school_data: { icon: School, text: 'Schools, rooms and class streams of a school year. The newest year is the base of the projection.' },
   catchment: { icon: MapPin, text: "Children aged 3 in each pre-primary school's catchment area, per year." },
   nisr_population: { icon: Users2, text: 'Children aged 3 per district and year: the totals of the default N1 plan.' },
 };

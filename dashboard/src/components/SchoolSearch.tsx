@@ -16,7 +16,8 @@ interface Entry {
 }
 
 /**
- * Find any school in the country by name (words in any order, accents ignored) or code, whatever the filters.
+ * Find any school in the country by name (words in any order, accents ignored) or code, whatever the filters; the
+ * page then filters to the school picked.
  * `/` focuses the box; arrows move through the results, Enter picks, Escape closes.
  */
 export default function SchoolSearch({ schools, meta, onPick }: {

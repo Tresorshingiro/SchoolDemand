@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import esriConfig from '@arcgis/core/config';
 import { version as arcgisVersion } from '@arcgis/core/kernel';
@@ -19,6 +19,8 @@ import SimpleFillSymbol from '@arcgis/core/symbols/SimpleFillSymbol';
 import TextSymbol from '@arcgis/core/symbols/TextSymbol';
 import Graphic from '@arcgis/core/Graphic';
 import Polygon from '@arcgis/core/geometry/Polygon';
+import Circle from '@arcgis/core/geometry/Circle';
+import Point from '@arcgis/core/geometry/Point';
 import Extent from '@arcgis/core/geometry/Extent';
 import Viewpoint from '@arcgis/core/Viewpoint';
 import Home from '@arcgis/core/widgets/Home';
@@ -29,6 +31,7 @@ import { fmt, fmtGap, type SchoolLevel } from '../data';
 import { COLORS, GAP_CLASSES, STATUS_COLORS, type Mode } from '../theme';
 import { onBeforePrint, usePrinting } from '../print';
 import { API_URL } from '../api';
+import type { PlannedOut } from '../newSchools';
 
 // Same setup as BTS ecofleet-web: with Vite, @arcgis/core must fetch its assets from the CDN.
 esriConfig.assetsPath = `https://js.arcgis.com/${arcgisVersion}/@arcgis/core/assets`;
@@ -55,16 +58,9 @@ const NEAR_SIZE = 16;
 const NAME_SCALE = 20000; // school names from about zoom 15
 const FOCUS = [250, 178, 25, 1]; // outline of the district / sector picked in the filters (status "warning" amber)
 
+// The map always shows the imagery (called "Map"); the grey canvas is only the fallback when the imagery cannot load.
 export type BasemapKind = 'canvas' | 'satellite';
-const BASEMAP_KEY = 'classroom-dashboard-basemap-v3'; // v3: everyone starts on imagery again (the blank-imagery bug is fixed)
-
-function storedBasemap(): BasemapKind {
-  try {
-    return localStorage.getItem(BASEMAP_KEY) === 'canvas' ? 'canvas' : 'satellite';
-  } catch {
-    return 'satellite';
-  }
-}
+const IMAGERY_TITLE = 'Map';
 
 /**
  * Esri World Imagery with place labels, or the grey canvas (both keyless, as in BTS), built at once. The basemap is
@@ -74,7 +70,7 @@ function storedBasemap(): BasemapKind {
 function makeBasemap(mode: Mode, kind: BasemapKind): Basemap {
   if (kind === 'satellite') {
     return new Basemap({
-      title: 'Satellite imagery',
+      title: IMAGERY_TITLE,
       // The imagery over Rwanda is dark at national scale: lift it a little so the landscape reads
       baseLayers: [new TileLayer({ url: IMAGERY, effect: 'brightness(1.12) contrast(1.05) saturate(1.3)' })],
       // Esri's place names only close up (about zoom 13+): further out they show neighbouring towns, old names
@@ -92,7 +88,7 @@ const basemapKey = (mode: Mode, kind: BasemapKind) => (kind === 'satellite' ? ki
  * OpenStreetMap; when its layer view stays suspended, give the map a fresh copy once.
  */
 async function showBasemap(view: MapView, first: Basemap, mode: Mode, onTitle: (t: string) => void): Promise<void> {
-  const chain = [first, ...(first.title === 'Satellite imagery' ? [makeBasemap(mode, 'canvas')] : []),
+  const chain = [first, ...(first.title === IMAGERY_TITLE ? [makeBasemap(mode, 'canvas')] : []),
     new Basemap({ baseLayers: [new OpenStreetMapLayer()], title: 'OpenStreetMap' })];
   const gone = () => view.destroyed || !view.map; // the view can be destroyed while a basemap loads
   for (const basemap of chain) {
@@ -110,7 +106,7 @@ async function showBasemap(view: MapView, first: Basemap, mode: Mode, onTitle: (
     if (gone()) return;
     await reactiveUtils.whenOnce(() => view.stationary);
     if (gone()) return;
-    if (lv?.suspended && view.map!.basemap === basemap) view.map!.basemap = makeBasemap(mode, basemap.title === 'Satellite imagery' ? 'satellite' : 'canvas');
+    if (lv?.suspended && view.map!.basemap === basemap) view.map!.basemap = makeBasemap(mode, basemap.title === IMAGERY_TITLE ? 'satellite' : 'canvas');
     return;
   }
 }
@@ -251,6 +247,18 @@ interface Hover {
   cluster: boolean;
 }
 
+/** Planning a new school on the map (projection page): the planned schools, the placing mode and its form. */
+export interface MapPlanning {
+  planned: PlannedOut[]; // drawn with their walking-distance ring (also when switched off: dimmed)
+  dimmed: boolean; // the plan of new schools is switched off
+  placing: boolean; // the next click on the map places a new school
+  draft: { latitude: number; longitude: number; km: number } | null; // the school being placed or edited
+  form: ReactNode; // its form, shown over the map
+  onPlacing: (on: boolean) => void;
+  onPlace: (latitude: number, longitude: number) => void;
+  onPick: (code: number) => void; // a planned school's pin clicked
+}
+
 interface Props {
   rows: SchoolLevel[];
   mode: Mode;
@@ -259,6 +267,41 @@ interface Props {
   /** District / sector picked in the page filters: outlined on the map. */
   district?: string;
   sector?: string;
+  planning?: MapPlanning;
+}
+
+const PLANNED_COLOR = [250, 178, 25] as const; // amber, as the outline of the picked area
+
+/** A planned school's pin, name and walking-distance ring. */
+function plannedGraphics(latitude: number, longitude: number, km: number, name: string | null, alpha = 1): Graphic[] {
+  const center = new Point({ latitude, longitude });
+  const ring = new Circle({ center, radius: km, radiusUnit: 'kilometers', geodesic: true, numberOfPoints: 90 });
+  const out = [
+    new Graphic({
+      geometry: ring,
+      symbol: new SimpleFillSymbol({
+        color: [255, 255, 255, 0.12 * alpha],
+        outline: { color: [255, 255, 255, 0.95 * alpha], width: 2, style: 'dash' },
+      }),
+    }),
+    new Graphic({
+      geometry: center,
+      attributes: { planned: 1 },
+      symbol: new SimpleMarkerSymbol({
+        style: 'diamond', size: 20, color: [...PLANNED_COLOR, alpha], outline: { color: [255, 255, 255, alpha], width: 2 },
+      }),
+    }),
+  ];
+  if (name) {
+    out.push(new Graphic({
+      geometry: center,
+      symbol: new TextSymbol({
+        text: name, color: [255, 255, 255, alpha], haloColor: [0, 0, 0, 0.75 * alpha], haloSize: 1.5, yoffset: 16,
+        font: { family: 'Noto Sans', size: 10, weight: 'bold' },
+      }),
+    }));
+  }
+  return out;
 }
 
 /** Check-box row of the legend panel: swatch (filled when shown), label, count. */
@@ -298,7 +341,10 @@ function LegendCheck({ on, label, onClick }: { on: boolean; label: string; onCli
   );
 }
 
-export default function SchoolMap({ rows, mode, selected, onSelect, district = '', sector = '' }: Props) {
+export default function SchoolMap({ rows, mode, selected, onSelect, district = '', sector = '', planning }: Props) {
+  const planningRef = useRef(planning);
+  planningRef.current = planning;
+  const planLayerRef = useRef<GraphicsLayer | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<MapView | null>(null);
   // The legend lives in the map's own top-left column (under zoom and Home); React renders into it with a portal
@@ -316,7 +362,7 @@ export default function SchoolMap({ rows, mode, selected, onSelect, district = '
   const [error, setError] = useState<string | null>(null);
   const [hover, setHover] = useState<Hover | null>(null);
   const [basemapName, setBasemapName] = useState('');
-  const [kind, setKind] = useState<BasemapKind>(storedBasemap);
+  const kind: BasemapKind = 'satellite';
   const [clustered, setClustered] = useState(true);
   const [showDistricts, setShowDistricts] = useState(true);
   const [showSectors, setShowSectors] = useState(true);
@@ -330,15 +376,6 @@ export default function SchoolMap({ rows, mode, selected, onSelect, district = '
   const shownBasemap = useRef(''); // basemapKey of the basemap on the map
   // Imagery is mid-dark in either theme, so dots use the saturated light-theme steps there.
   const dotMode: Mode = kind === 'satellite' ? 'light' : mode;
-
-  const chooseKind = (next: BasemapKind) => {
-    setKind(next);
-    try {
-      localStorage.setItem(BASEMAP_KEY, next);
-    } catch {
-      /* storage unavailable — choice lasts for this visit only */
-    }
-  };
 
   const mapped = useMemo(() => rows.filter((r) => r.x !== null).length, [rows]);
   const shown = useMemo(() => rows.filter((r) => r.x !== null && !hidden.has(breakOf(r.gap).label)).length, [rows, hidden]);
@@ -388,10 +425,12 @@ export default function SchoolMap({ rows, mode, selected, onSelect, district = '
       labelingInfo: areaLabels('s', 9, false, SECTOR_LABEL_SCALES, style),
     });
     const focus = new GraphicsLayer({ title: 'Selected area', listMode: 'hide' });
+    const plan = new GraphicsLayer({ title: 'Planned schools', listMode: 'hide' }); // above the schools
+    planLayerRef.current = plan;
     // The mask sits above the boundaries: district shapes reach into Lake Kivu, beyond the country outline
     const basemap = makeBasemap(mode, kind);
     shownBasemap.current = basemapKey(mode, kind);
-    const map = new ArcGISMap({ basemap, layers: [sectors, districts, mask, focus] });
+    const map = new ArcGISMap({ basemap, layers: [sectors, districts, mask, focus, plan] });
     const view = new MapView({
       container: containerRef.current,
       map,
@@ -424,6 +463,19 @@ export default function SchoolMap({ rows, mode, selected, onSelect, district = '
     };
 
     const click = view.on('click', async (event) => {
+      const p = planningRef.current;
+      if (p?.placing) { // placing a new school: the click is its location
+        if (event.mapPoint) p.onPlace(event.mapPoint.latitude!, event.mapPoint.longitude!);
+        return;
+      }
+      if (p?.planned.length) { // a planned school's pin
+        const res = await view.hitTest(event, { include: [plan] });
+        const pin = res.results.find((r): r is __esri.GraphicHit => r.type === 'graphic' && !!r.graphic.attributes?.code);
+        if (pin) {
+          p.onPick(Number(pin.graphic.attributes.code));
+          return;
+        }
+      }
       const g = await hitLayer(event);
       if (!g) return;
       if (g.isAggregate) view.goTo({ target: g.geometry, zoom: view.zoom + 2 }, { duration: 500 }).catch(() => undefined);
@@ -434,6 +486,11 @@ export default function SchoolMap({ rows, mode, selected, onSelect, district = '
     const move = view.on('pointer-move', (event) => {
       cancelAnimationFrame(frame);
       frame = requestAnimationFrame(async () => {
+        if (planningRef.current?.placing) { // placing a new school: a crosshair, no hover card
+          if (containerRef.current) containerRef.current.style.cursor = 'crosshair';
+          setHover(null);
+          return;
+        }
         const g: Graphic | null = await hitLayer(event);
         if (containerRef.current) containerRef.current.style.cursor = g ? 'pointer' : '';
         setHover(g ? { x: event.x, y: event.y, attrs: g.attributes, cluster: !!g.isAggregate } : null);
@@ -455,12 +512,13 @@ export default function SchoolMap({ rows, mode, selected, onSelect, district = '
       viewRef.current = null;
       layersRef.current = [];
       bounds.current = null;
+      planLayerRef.current = null;
     };
     // Created once; the effect below restyles the layers for the theme and basemap.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Basemap follows the Satellite / Map switch (and the theme on the Map); boundaries and mask restyle with it.
+  // Boundaries and mask restyle with the theme (the basemap is always the imagery).
   useEffect(() => {
     const view = viewRef.current;
     if (view?.map && shownBasemap.current !== basemapKey(mode, kind)) {
@@ -590,6 +648,36 @@ export default function SchoolMap({ rows, mode, selected, onSelect, district = '
     };
   }, [rows, dotMode, kind, mode, ready, clustered, hidden]);
 
+  // Planned new schools and the one being placed: pin, name and walking-distance ring
+  const plannedList = planning?.planned;
+  const draft = planning?.draft;
+  const dimmed = planning?.dimmed ?? false;
+  useEffect(() => {
+    const layer = planLayerRef.current;
+    if (!layer || !ready) return;
+    layer.removeAll();
+    for (const p of plannedList ?? []) {
+      const graphics = plannedGraphics(p.y, p.x, p.km, p.n, dimmed ? 0.45 : 1);
+      graphics.forEach((g) => {
+        if (g.attributes?.planned) g.attributes = { planned: 1, code: p.c };
+      });
+      layer.addMany(graphics);
+    }
+    if (draft) layer.addMany(plannedGraphics(draft.latitude, draft.longitude, draft.km, null));
+  }, [plannedList, draft, dimmed, ready]);
+
+  // Esc leaves the placing mode
+  const placing = planning?.placing ?? false;
+  useEffect(() => {
+    if (!placing) {
+      if (containerRef.current) containerRef.current.style.cursor = '';
+      return;
+    }
+    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && planningRef.current?.onPlacing(false);
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [placing]);
+
   useEffect(() => onBeforePrint(async () => {
     const view = viewRef.current;
     if (!view || !ready) return;
@@ -612,6 +700,11 @@ export default function SchoolMap({ rows, mode, selected, onSelect, district = '
     }
     const pts = rows.filter((r) => r.x !== null && r.y !== null);
     if (!pts.length) return;
+    if (pts.length === 1) { // one school (the search box's school filter): an extent of one point has no size
+      view.goTo({ center: [pts[0].x as number, pts[0].y as number], zoom: Math.max(view.zoom, 15) }, { duration: 600 })
+        .catch(() => undefined);
+      return;
+    }
     const xs = pts.map((r) => r.x as number);
     const ys = pts.map((r) => r.y as number);
     const extent = new Extent({
@@ -663,7 +756,7 @@ export default function SchoolMap({ rows, mode, selected, onSelect, district = '
 
   const panel = 'rounded-lg border border-line bg-surface shadow-lg';
   return (
-    <div className="relative h-full min-h-[480px] overflow-hidden">
+    <div className="print-map-body relative h-full min-h-[480px] overflow-hidden">
       <div ref={containerRef} className="absolute inset-0" aria-label="Map of schools coloured by classroom gap" />
       {printing && shot && (
         <img src={shot} alt="Map of schools coloured by classroom gap" className="absolute inset-0 z-20 h-full w-full object-cover" />
@@ -703,15 +796,19 @@ export default function SchoolMap({ rows, mode, selected, onSelect, district = '
         </div>
       )}
 
-      {/* Top right: basemap */}
-      {ready && (
-        <div className={`${panel} absolute right-3 top-3 z-10 flex gap-0.5 p-0.5 print:hidden`} role="radiogroup" aria-label="Basemap">
-          {(['satellite', 'canvas'] as const).map((k) => (
-            <button key={k} type="button" role="radio" aria-checked={kind === k} onClick={() => chooseKind(k)}
-              className={`rounded-md px-3 py-1 text-xs font-medium ${kind === k ? 'bg-accent text-white' : 'text-ink2 hover:text-ink'}`}>
-              {k === 'canvas' ? 'Map' : 'Satellite'}
-            </button>
-          ))}
+      {/* Top right: plan a new school, and its form */}
+      {ready && planning && (
+        <div className="absolute right-3 top-3 z-10 flex w-[290px] flex-col items-end gap-2 print:hidden">
+          <button type="button" aria-pressed={planning.placing} onClick={() => planning.onPlacing(!planning.placing)}
+            className={`${panel} px-3 py-1.5 text-xs font-semibold ${planning.placing ? 'border-accent bg-accent text-white' : 'text-ink hover:text-accent'}`}>
+            {planning.placing ? 'Click on the map… (Esc to cancel)' : '+ Plan a new school'}
+          </button>
+          {planning.form && <div className={`${panel} max-h-[520px] w-full overflow-y-auto`}>{planning.form}</div>}
+        </div>
+      )}
+      {ready && planning?.placing && (
+        <div className="pointer-events-none absolute inset-x-3 bottom-3 z-10 rounded-md bg-black/65 px-3 py-2 text-xs text-white print:hidden">
+          Click where the new school would be built. Esc to cancel.
         </div>
       )}
 

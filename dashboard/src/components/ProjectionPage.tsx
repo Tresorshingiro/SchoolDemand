@@ -1,14 +1,24 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { fmt, loadDataset, totals, type Dataset, type Meta, type SchoolLevel } from '../data';
+import { ALL_LEVELS, fmt, loadDataset, type Dataset, type Meta, type SchoolLevel } from '../data';
 import {
   catchmentDemand, cohortTable, comboTable, copyScenario, createScenario, defaultIntake, deleteScenario, fetchProjection, getScenario, gradeByDistrict,
-  listScenarios, loadProjectionBase, projectionMeta, sameIntake, updateScenario, yearDataset, yearTotals,
+  levelTotals, listScenarios, loadProjectionBase, projectionMeta, sameIntake, updateScenario, yearDataset, yearTotals,
   type Intake, type ProjectionBase, type ProjectedYear, type Scenario, type ScenarioSummary,
 } from '../projection';
 import type { Mode } from '../theme';
 import { isAdmin, useAuth } from '../auth';
+import {
+  copySchoolPlan, createSchoolPlan, DEFAULT_KM, defaultClassrooms, deleteSchoolPlan, getSchoolPlan, listSchoolPlans,
+  plannedInfo, saveSchools, storedSchools, updateSchoolPlan,
+  type PlannedOut, type PlannedSchoolInput, type SchoolPlan, type SchoolPlanSummary,
+} from '../newSchools';
+import type { Filters } from '../data';
+import type { MapPlanning } from './SchoolMap';
+import NewSchoolForm from './NewSchoolForm';
+import NewSchoolImpact from './NewSchoolImpact';
 import Overview, { Card } from './Overview';
-import IntakePlanner, { FedEntrants } from './IntakePlanner';
+import IntakePlanner, { FedEntrants, type SchoolEntrants } from './IntakePlanner';
+import SchoolPlanBar, { type SchoolPlanControls } from './SchoolPlanBar';
 import { CatchmentDemandChart, CohortChart, CompareBars, YearTrend, type SchoolDemand } from './Charts';
 
 // The plan on screen (with unsaved edits) and the saved scenario it came from, remembered in this browser.
@@ -116,7 +126,7 @@ function CombinationTable({ years, baseYear, year, rows }: {
                   {y}{y === baseYear ? '*' : ''}
                 </th>
               ))}
-              <th className="px-2 py-1.5 text-right font-medium">Class groups {year}</th>
+              <th className="px-2 py-1.5 text-right font-medium">Class streams {year}</th>
             </tr>
           </thead>
           <tbody>
@@ -196,9 +206,26 @@ export default function ProjectionPage({ current, mode }: { current: Dataset; mo
   const [archived, setArchived] = useState<ScenarioSummary | null>(null); // an older plan picked: shown, not loaded
   const [scenarioBusy, setScenarioBusy] = useState(false);
   const [scenarioMessage, setScenarioMessage] = useState<string | null>(null);
+  // Planned new schools (separate from the intake plan) and the saved plan of new schools they came from
+  const [schools, setSchools] = useState<PlannedSchoolInput[]>([]);
+  const [schoolsOn, setSchoolsOn] = useState(true);
+  const [schoolPlan, setSchoolPlan] = useState<SchoolPlan | null>(null);
+  const [schoolPlans, setSchoolPlans] = useState<SchoolPlanSummary[]>([]);
+  const [archivedSchools, setArchivedSchools] = useState<SchoolPlanSummary | null>(null);
+  const [schoolBusy, setSchoolBusy] = useState(false);
+  const [schoolMessage, setSchoolMessage] = useState<string | null>(null);
+  // Placing a school on the map, and the one in the form (index into `schools`, null = a new one)
+  const [placing, setPlacing] = useState(false);
+  const [editing, setEditing] = useState<{ index: number | null; school: PlannedSchoolInput } | null>(null);
+  const [draftKm, setDraftKm] = useState(2);
+  const [formError, setFormError] = useState<string | null>(null);
+  const [formBusy, setFormBusy] = useState(false);
 
   const refreshScenarios = useCallback(() => {
     listScenarios().then(setScenarios).catch(() => undefined); // the plan still works without the list
+  }, []);
+  const refreshSchoolPlans = useCallback(() => {
+    listSchoolPlans().then(setSchoolPlans).catch(() => undefined);
   }, []);
 
   useEffect(() => {
@@ -210,10 +237,24 @@ export default function ProjectionPage({ current, mode }: { current: Dataset; mo
         if (stored?.scenarioId != null) {
           getScenario(stored.scenarioId).then((s) => (s.archived ? undefined : setActive(s))).catch(() => undefined);
         }
+        const kept = storedSchools(b.baseYear);
+        if (kept) {
+          setSchools(kept.schools);
+          setSchoolsOn(kept.on);
+          if (kept.planId != null) {
+            getSchoolPlan(kept.planId).then((p) => (p.archived ? undefined : setSchoolPlan(p))).catch(() => undefined);
+          }
+        }
       })
       .catch((e: unknown) => setError(message(e)));
     refreshScenarios();
-  }, [refreshScenarios]);
+    refreshSchoolPlans();
+  }, [refreshScenarios, refreshSchoolPlans]);
+
+  // Remember the planned schools on screen in this browser (per base year)
+  useEffect(() => {
+    if (base) saveSchools(base.baseYear, { planId: schoolPlan?.id ?? null, on: schoolsOn, schools });
+  }, [base, schools, schoolsOn, schoolPlan]);
 
   const changeIntake = useCallback((next: Intake) => {
     setIntake(next);
@@ -310,18 +351,27 @@ export default function ProjectionPage({ current, mode }: { current: Dataset; mo
       cancelled = true;
     };
   }, [pastYears]);
-  // The projection runs on the server; the previous result stays on screen while a new plan is calculated
+  // The projection runs on the server; the previous result stays on screen while a new plan is calculated. With
+  // planned new schools on, the run without them (`before`) is kept too, for the before -> after figures.
   const [result, setResult] = useState<ProjectedYear[] | null>(null);
+  const [planned, setPlanned] = useState<PlannedOut[]>([]);
+  const [before, setBefore] = useState<ProjectedYear[] | null>(null);
   const [computing, setComputing] = useState(false);
   const [runError, setRunError] = useState<string | null>(null);
+  const activeSchools = useMemo(() => (schoolsOn ? schools : []), [schoolsOn, schools]);
   useEffect(() => {
     if (!base || !intake) return;
     let cancelled = false;
     setComputing(true);
-    fetchProjection(base, intake, info)
-      .then((r) => {
+    Promise.all([
+      fetchProjection(base, intake, info, activeSchools),
+      activeSchools.length ? fetchProjection(base, intake, info) : Promise.resolve(null),
+    ])
+      .then(([r, without]) => {
         if (cancelled) return;
-        setResult(r);
+        setResult(r.years);
+        setPlanned(r.planned);
+        setBefore(without?.years ?? null);
         setRunError(null);
       })
       .catch((e: unknown) => !cancelled && setRunError(message(e)))
@@ -329,13 +379,154 @@ export default function ProjectionPage({ current, mode }: { current: Dataset; mo
     return () => {
       cancelled = true;
     };
-  }, [base, intake, info]);
+  }, [base, intake, info, activeSchools]);
+  // The school lookup with the planned schools of the run
+  const infoAll = useMemo(
+    () => (planned.length ? new Map([...info, ...planned.map((p) => [p.c, plannedInfo(p)] as const)]) : info),
+    [info, planned],
+  );
+
+  const startEdit = (i: number) => {
+    const s = schools[i];
+    if (!s) return;
+    setPlacing(false);
+    setFormError(null);
+    setDraftKm(s.walking_km);
+    setEditing({ index: i, school: s });
+  };
+  // The school of the form is checked by a run with it (the API refuses a point outside Rwanda's sectors ...) before
+  // it joins the planned schools
+  const submitSchool = async (s: PlannedSchoolInput) => {
+    if (!base || !intake || !editing) return;
+    const list = editing.index === null ? [...schools, s] : schools.map((x, k) => (k === editing.index ? s : x));
+    setFormBusy(true);
+    setFormError(null);
+    try {
+      await fetchProjection(base, intake, info, list);
+      setSchools(list);
+      setSchoolsOn(true);
+      setEditing(null);
+    } catch (e) {
+      setFormError(message(e));
+    } finally {
+      setFormBusy(false);
+    }
+  };
+  const planning = (filters: Filters): MapPlanning | undefined => {
+    if (!base) return undefined;
+    // All levels: a new school is a Primary school until the form says otherwise
+    const li = filters.level === ALL_LEVELS ? current.meta.levels.findIndex((l) => l.key === 'PRI') : filters.level;
+    const key = current.meta.levels[li]?.key ?? 'PRI';
+    return {
+      planned,
+      dimmed: !schoolsOn,
+      placing,
+      draft: editing ? { latitude: editing.school.latitude, longitude: editing.school.longitude, km: draftKm } : null,
+      form: editing ? (
+        <NewSchoolForm key={`${editing.index}-${editing.school.latitude}-${editing.school.longitude}`} base={base}
+          meta={current.meta} initial={editing.school} editing={editing.index !== null} error={formError} busy={formBusy}
+          onKm={setDraftKm} onSubmit={(s) => void submitSchool(s)} onCancel={() => setEditing(null)} />
+      ) : null,
+      onPlacing: (on) => {
+        setPlacing(on);
+        if (on) setEditing(null);
+      },
+      onPlace: (latitude, longitude) => {
+        const km = DEFAULT_KM[key] ?? 2;
+        setPlacing(false);
+        setFormError(null);
+        setDraftKm(km);
+        setEditing({
+          index: null,
+          school: {
+            name: `New school ${schools.length + 1}`, latitude, longitude,
+            levels: { [key]: defaultClassrooms(base, li) }, opening_year: base.years[1], walking_km: km,
+          },
+        });
+      },
+      // The pins come from the last run: while a new one is calculated their codes may not match the list any more
+      onPick: (code) => !computing && startEdit(-code - 1),
+    };
+  };
+
+  const runSchoolPlan = useCallback(async (work: () => Promise<void>) => {
+    setSchoolBusy(true);
+    setSchoolMessage(null);
+    try {
+      await work();
+    } catch (e) {
+      setSchoolMessage(message(e));
+    } finally {
+      setSchoolBusy(false);
+    }
+  }, []);
+  const schoolControls: SchoolPlanControls | null = base && intake ? {
+    plans: schoolPlans,
+    active: schoolPlan,
+    archived: archivedSchools,
+    on: schoolsOn,
+    schools,
+    dirty: !!schoolPlan && JSON.stringify(schools) !== JSON.stringify(schoolPlan.plan_schools),
+    canEdit: isAdmin(user),
+    busy: schoolBusy,
+    message: schoolMessage,
+    onOpen: (id) => runSchoolPlan(async () => {
+      const pick = id === null ? null : schoolPlans.find((p) => p.id === id) ?? null;
+      if (pick?.archived) {
+        setArchivedSchools(pick); // older years: shown, not loaded
+        return;
+      }
+      setArchivedSchools(null);
+      const p = id === null ? null : await getSchoolPlan(id);
+      setSchoolPlan(p);
+      setSchools(p ? p.plan_schools : []);
+      setSchoolsOn(true);
+    }),
+    onToggle: setSchoolsOn,
+    onEdit: (i) => startEdit(i),
+    onRemove: (i) => {
+      setEditing(null); // its index into the list would no longer be right
+      setSchools((list) => list.filter((_, k) => k !== i));
+    },
+    onSave: () => runSchoolPlan(async () => {
+      if (!schoolPlan) return;
+      const p = await updateSchoolPlan(schoolPlan.id, schoolPlan.name, schools, intake, schoolPlan.description);
+      setSchoolPlan(p);
+      setSchools(p.plan_schools);
+      setSchoolMessage(`Saved "${p.name}".`);
+      refreshSchoolPlans();
+    }),
+    onSaveAs: (name) => runSchoolPlan(async () => {
+      const p = await createSchoolPlan(name, schools, intake);
+      setSchoolPlan(p);
+      setSchools(p.plan_schools);
+      setSchoolMessage(`Saved as "${p.name}" — everyone using the dashboard can open it.`);
+      refreshSchoolPlans();
+    }),
+    onDelete: () => runSchoolPlan(async () => {
+      if (!schoolPlan || !window.confirm(`Delete the plan of new schools "${schoolPlan.name}" for everyone?`)) return;
+      await deleteSchoolPlan(schoolPlan.id);
+      setSchoolMessage(`Deleted "${schoolPlan.name}". Its schools stay on screen, unsaved.`);
+      setSchoolPlan(null);
+      refreshSchoolPlans();
+    }),
+    onCopy: (name) => runSchoolPlan(async () => {
+      if (!archivedSchools) return;
+      const p = await copySchoolPlan(archivedSchools.id, name);
+      setArchivedSchools(null);
+      setSchoolPlan(p);
+      setSchools(p.plan_schools);
+      setSchoolsOn(true);
+      setSchoolMessage(`Copied to "${p.name}".`);
+      refreshSchoolPlans();
+    }),
+  } : null;
   const meta = useMemo(() => (base ? projectionMeta(base, current.meta) : current.meta), [base, current]);
   // Students per district and year for every entry grade
   const entryByDistrict = useMemo(() => {
     if (!base || !result) return {};
-    return Object.fromEntries(base.levels.map((l) => [l.grades[0], gradeByDistrict(result, meta, l.grades[0], info)]));
-  }, [base, result, meta, info]);
+    return Object.fromEntries(base.levels.map((l) => [l.grades[0], gradeByDistrict(result, meta, l.grades[0], infoAll)]));
+  }, [base, result, meta, infoAll]);
   const presetLabel = useMemo(() => {
     if (!base || !intake) return '';
     if (active) return sameIntake(intake, active.intake) ? active.name : `${active.name} (edited)`;
@@ -357,7 +548,7 @@ export default function ProjectionPage({ current, mode }: { current: Dataset; mo
   const pastTotals = (level: number, codes: Set<number>) =>
     pastYears.flatMap((y) => {
       const d = history.get(y);
-      return d ? [{ year: y, ...totals(d.schools.filter((r) => r.l === level && codes.has(r.c))) }] : [];
+      return d ? [{ year: y, ...levelTotals(d.schools, level, codes) }] : [];
     });
   const years = base.years.slice(1);
   // Where the new students of an entry grade come from: a district pool (P6 -> S1) or the same school (N3 -> P1)
@@ -405,44 +596,70 @@ export default function ProjectionPage({ current, mode }: { current: Dataset; mo
           </label>
         </>
       }
+      planning={planning}
       afterCharts={(codes, filters, pickSchool) => {
+        if (filters.level === ALL_LEVELS) return null;
         const level = base.levels.find((l) => l.level === filters.level) ?? base.levels[0];
         // Pre-primary (the level whose entry grade comes from the catchment population): demand per school
         return base.intakes[level.grades[0]] !== undefined ? (
-          <CatchmentDemandCard base={base} result={result} meta={meta} year={year} codes={codes} info={info}
+          <CatchmentDemandCard base={base} result={result} meta={meta} year={year} codes={codes} info={infoAll}
             mode={mode} onPick={pickSchool} />
         ) : null;
       }}
       top={(codes, filters) => {
-        const level = base.levels.find((l) => l.level === filters.level) ?? base.levels[0];
+        // All levels: the intake plan (the level whose new students come from the catchment population) and every grade
+        const all = filters.level === ALL_LEVELS;
+        const level = (all ? base.levels.find((l) => base.intakes[l.grades[0]] !== undefined)
+          : base.levels.find((l) => l.level === filters.level)) ?? base.levels[0];
         const entry = level.grades[0];
         const age = base.intakes[entry];
         const feed = feedOf(entry);
         const byDistrict = entryByDistrict[entry];
-        const cohort = cohortTable(result, meta, level.grades, codes);
+        const cohort = cohortTable(result, meta, all ? base.grades : level.grades, codes);
         const national = years.map((_, yi) => [...byDistrict.values()].reduce((s, v) => s + v[yi + 1], 0));
         const perYear = years.map((y, yi) => `${y} ${fmt(national[yi])}`).join(' · ');
+        // The school picked with the search box: its own students of each entry grade per year
+        const school: SchoolEntrants | undefined = filters.school === null ? undefined : {
+          name: infoAll.get(filters.school)?.n ?? String(filters.school),
+          byGrade: Object.fromEntries([entry, ...(feed?.targets ?? [])].map((g) => [
+            g, cohortTable(result, meta, [g], new Set([filters.school!]))[0].byYear,
+          ])),
+        };
+        const levelPlanned = planned.filter((p) => p.levels.includes(filters.level));
+        const pyBefore = before?.find((r) => r.year === py.year);
         return (
           <>
+            {schoolsOn && levelPlanned.length > 0 && pyBefore && year >= base.baseYear && (
+              <Card title="What the new schools change"
+                sub={`${current.meta.levels[filters.level].label}, ${py.year}. Pick another year with the Year control.`}>
+                <NewSchoolImpact planned={levelPlanned} before={pyBefore} after={py} level={filters.level} year={py.year}
+                  meta={meta} info={infoAll} />
+              </Card>
+            )}
+            {schoolControls && (
+              <Card title="New schools" sub="What if a new school is built here? Plans of new schools are separate from the intake plan.">
+                <SchoolPlanBar c={schoolControls} meta={meta} />
+              </Card>
+            )}
             {age !== undefined ? (
-              <Card title={`${entry} intake plan — new ${entry} students per district`}
+              <Card title={`${entry} intake plan — new ${entry} students per district${school ? ` · ${school.name}` : ''}`}
                 sub={`Children aged ${age} in the schools' catchment areas · Plan: ${presetLabel} · new ${entry} nationally: ${perYear}`}
                 aside={<button type="button" onClick={() => setPlannerOpen((o) => !o)} aria-expanded={plannerOpen} className="rounded-md border border-line px-2.5 py-1 text-xs text-ink2 hover:text-ink print:hidden">{plannerOpen ? 'Hide table' : 'Show table'}</button>}>
                 {plannerOpen ? (
                   <IntakePlanner base={base} intake={intake} onChange={changeIntake} grade={entry}
-                    baseByDistrict={byDistrict} district={filters.district} mode={mode} scenarios={scenarioControls} />
+                    baseByDistrict={byDistrict} district={filters.district} school={school} mode={mode} scenarios={scenarioControls} />
                 ) : null}
 
               </Card>
             ) : null}
             {age === undefined && feed ? (
-              <Card title={`New ${entry} students per district`}
+              <Card title={school ? `New ${entry} students · ${school.name}` : `New ${entry} students per district`}
                 sub={`From the ${feed.source} of the year before${feed.sameSchool ? ' in the same school' : ''}${feed.targets.length > 1 ? `, split between ${feed.targets.join(' / ')} by each district's ${base.baseYear} mix` : ''} · nationally: ${perYear}`}
                 aside={<button type="button" onClick={() => setPlannerOpen((o) => !o)} aria-expanded={plannerOpen} className="rounded-md border border-line px-2.5 py-1 text-xs text-ink2 hover:text-ink print:hidden">{plannerOpen ? 'Hide table' : 'Show table'}</button>}>
                 {plannerOpen && (
                   <FedEntrants base={base} grade={entry} source={feed.source} targets={feed.targets} sameSchool={feed.sameSchool}
                     byDistrict={Object.fromEntries(feed.targets.map((t) => [t, entryByDistrict[t]]))} district={filters.district}
-                    mode={mode} />
+                    school={school} mode={mode} />
                 )}
               </Card>
             ) : null}
@@ -453,11 +670,12 @@ export default function ProjectionPage({ current, mode }: { current: Dataset; mo
                   <CohortChart rows={cohort} years={base.years} baseYear={base.baseYear} year={year} mode={mode} onPick={pickYear} />
                 </div>
                 <div className="print-span-2 lg:col-span-2">
-                  <CohortTable years={base.years} baseYear={base.baseYear} year={year} entryNote={entryNote(entry)} rows={cohort} />
+                  <CohortTable years={base.years} baseYear={base.baseYear} year={year} rows={cohort}
+                    entryNote={all ? 'new students enter the first grade of each level' : entryNote(entry)} />
                 </div>
               </div>
             </Card>
-            {(base.combos[base.levels.indexOf(level)] ?? []).length > 0 && (
+            {!all && (base.combos[base.levels.indexOf(level)] ?? []).length > 0 && (
               <Card title="Students by combination and year"
                 sub={`${level.grades.join(', ')} combined. The selected year is highlighted; largest first.`}>
                 <CombinationTable years={base.years} baseYear={base.baseYear} year={year}
@@ -468,20 +686,21 @@ export default function ProjectionPage({ current, mode }: { current: Dataset; mo
         );
       }}
       shortageTop={(codes, filters) => {
-        const level = base.levels.find((l) => l.level === filters.level) ?? base.levels[0];
+        const level = base.levels.find((l) => l.level === filters.level);
+        const rule = level ? level.fullDay : null; // null: all levels together
         const byYear = [...pastTotals(filters.level, codes), ...yearTotals(result, filters.level, codes)];
         return (
           <div className="print-cols-2 grid gap-4 lg:grid-cols-2">
             <Card title="Classrooms short by year" sub="Classrooms to build if no rooms are added. Click a bar to show that year.">
               <div className="px-2 pb-3">
                 <YearTrend data={byYear} mode={mode} year={year} baseYear={base.baseYear} actual={[...pastYears, base.baseYear]}
-                  onPick={pickYear} fullDay={level.fullDay} />
+                  onPick={pickYear} fullDay={rule} />
               </div>
             </Card>
             <Card title="Rooms available vs required by year"
               sub={`Rooms stay at the ${base.baseYear} count while the rooms needed follow the students. Click a year to show it.`}>
               <div className="px-2 pb-3">
-                <CompareBars data={byYear.map((d) => ({ ...d, name: String(d.year) }))} mode={mode} fullDay={level.fullDay}
+                <CompareBars data={byYear.map((d) => ({ ...d, name: String(d.year) }))} mode={mode} fullDay={rule}
                   highlight={String(year)} onPick={pickYear} label="Rooms available versus required by year" />
               </div>
             </Card>

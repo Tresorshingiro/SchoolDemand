@@ -153,5 +153,8 @@ html.printing .print-tiles-3 > * { grid-column: auto !important; }
     break-inside: avoid;
   }
 }
-html.printing .print-map { height: 560px !important; min-height: 0 !important; align-self: start; }
+/* Short enough to sit on page 1 under the report heading and tiles; at 560px the whole map row jumped to page 2
+   and left most of page 1 empty. */
+html.printing .print-map { height: 360px !important; min-height: 0 !important; align-self: start; }
+html.printing .print-map-body { min-height: 0 !important; }
 html.printing .print-cell { display: table-cell !important; }

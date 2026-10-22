@@ -63,7 +63,7 @@ const pctChange = ([a, b]: [number, number]) => (a ? `${b >= a ? '+' : ''}${(((b
 function Changes({ d }: { d: ImportDetail }) {
   const c = d.report?.changes;
   if (!c) return null;
-  const cols: [keyof LevelChange, string][] = [['students', 'Students'], ['class_groups', 'Class groups'], ['rooms', 'Rooms'],
+  const cols: [keyof LevelChange, string][] = [['students', 'Students'], ['class_groups', 'Class streams'], ['rooms', 'Rooms'],
     ['required', 'Required'], ['gap', 'Gap']];
   return (
     <Panel className="overflow-hidden">

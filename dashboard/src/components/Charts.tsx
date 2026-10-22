@@ -81,8 +81,12 @@ export function ShortageByArea({
 
 /* ------------------------------------------------------------------ available vs required by grade */
 
-/** Name of the `doubleShift` measure: full-day levels have no double shift, it counts class groups without a room. */
-export const dsName = (fullDay: boolean) => (fullDay ? 'Class groups without a room' : 'Double-shift sessions');
+/**
+ * Name of the `doubleShift` measure: full-day levels have no double shift, it counts class streams without a room.
+ * `fullDay` null = all levels together (double shift in Pre-Primary and Primary, no room in the full-day levels).
+ */
+export const dsName = (fullDay: boolean | null) =>
+  (fullDay === null ? 'Double shift or no room' : fullDay ? 'Class streams without a room' : 'Double-shift sessions');
 
 /** One category of an available-vs-required comparison (a grade, a province, a year...). */
 export interface CompareItem {
@@ -99,7 +103,7 @@ export interface CompareItem {
 export function CompareBars({ data, mode, fullDay = false, horizontal = false, height, label, onPick, highlight }: {
   data: CompareItem[];
   mode: Mode;
-  fullDay?: boolean;
+  fullDay?: boolean | null;
   horizontal?: boolean;
   height?: number;
   label: string;
@@ -135,7 +139,7 @@ export function CompareBars({ data, mode, fullDay = false, horizontal = false, h
             `<div style="border-top:1px solid ${c.grid};margin:4px 0"></div>` +
             row(c.deficit, 'Classrooms short', fmt(g.short)) +
             row(c.doubleShift, dsName(fullDay), fmt(g.doubleShift)) +
-            `<div style="color:${c.ink2};margin-top:4px">${fmt(g.students)} students · ${fmt(g.classGroups)} class groups</div>` +
+            `<div style="color:${c.ink2};margin-top:4px">${fmt(g.students)} students · ${fmt(g.classGroups)} class streams</div>` +
             (onPick ? `<div style="color:${c.muted};margin-top:2px">Click to select</div>` : '');
         },
       },
@@ -153,7 +157,7 @@ export function CompareBars({ data, mode, fullDay = false, horizontal = false, h
   return <EChart option={option} height={h} onClick={onPick} label={label} />;
 }
 
-export function GradeChart({ data, mode, fullDay = false }: { data: GradeTotals[]; mode: Mode; fullDay?: boolean }) {
+export function GradeChart({ data, mode, fullDay = false }: { data: GradeTotals[]; mode: Mode; fullDay?: boolean | null }) {
   const items = useMemo(() => data.map((g) => ({ ...g, name: g.grade })), [data]);
   return <CompareBars data={items} mode={mode} fullDay={fullDay} label="Rooms available versus rooms required by grade" />;
 }
@@ -174,7 +178,7 @@ export function GradeLegend({ grades, mode }: { grades: string[]; mode: Mode }) 
   );
 }
 
-/* ------------------------------------------------------------------ students / class groups by area, stacked by grade */
+/* ------------------------------------------------------------------ students / class streams by area, stacked by grade */
 
 export function StackedGradesByArea({ data, grades, measure, mode, areaLabel, onPick, labelOf, pickText = 'Click to filter' }: {
   data: AreaGrades[];
@@ -187,7 +191,7 @@ export function StackedGradesByArea({ data, grades, measure, mode, areaLabel, on
   labelOf?: (area: string) => { name: string; sub?: string };
   pickText?: string;
 }) {
-  const noun = measure === 'students' ? 'students' : 'class groups';
+  const noun = measure === 'students' ? 'students' : 'class streams';
   const option = useMemo(() => {
     const c = COLORS[mode];
     const colors = gradeColors(grades.length, mode);
@@ -533,9 +537,10 @@ export function EntrantsChart({ grade, years, baseYear, base, plan, defaults, de
 /* ------------------------------------------------------------------ double-shift share by area */
 
 export function DoubleShiftByArea({ data, mode, areaLabel, fullDay = false }: {
-  data: [string, Totals][]; mode: Mode; areaLabel: string; fullDay?: boolean;
+  data: [string, Totals][]; mode: Mode; areaLabel: string; fullDay?: boolean | null;
 }) {
-  const shareName = fullDay ? 'Share without a room' : 'Double-shift share';
+  const shareName = fullDay === null ? 'Double shift or no room' : fullDay ? 'Share without a room' : 'Double-shift share';
+  const how = fullDay === null ? 'share a room or have none' : fullDay ? 'have no room of their own' : 'share a room';
   const option = useMemo(() => {
     const c = COLORS[mode];
     const share = (t: Totals) => (t.classGroups ? t.doubleShift / t.classGroups : 0);
@@ -549,8 +554,7 @@ export function DoubleShiftByArea({ data, mode, areaLabel, fullDay = false }: {
           const [name, t] = sorted[ps[0].dataIndex];
           return `<div style="font-weight:600;margin-bottom:4px">${name}</div>` +
             row(c.doubleShift, shareName, pct(t.doubleShift, t.classGroups)) +
-            `<div style="color:${c.ink2};margin-top:4px">${fmt(t.doubleShift)} of ${fmt(t.classGroups)} class groups ${
-              fullDay ? 'have no room of their own' : 'share a room'}</div>`;
+            `<div style="color:${c.ink2};margin-top:4px">${fmt(t.doubleShift)} of ${fmt(t.classGroups)} class streams ${how}</div>`;
         },
       },
       xAxis: {
@@ -568,10 +572,10 @@ export function DoubleShiftByArea({ data, mode, areaLabel, fullDay = false }: {
           formatter: (p: { value: number }) => `${(p.value * 100).toFixed(0)}%` },
       }],
     };
-  }, [data, mode, fullDay, shareName]);
+  }, [data, mode, shareName, how]);
   const height = Math.max(220, data.length * 22 + 24);
   return <EChart option={option} height={height}
-    label={`Share of class groups ${fullDay ? 'without a room' : 'on double shift'} by ${areaLabel}`} />;
+    label={`Share of class streams that ${how} by ${areaLabel}`} />;
 }
 
 /* ------------------------------------------------------------------ projection trend by year */
@@ -586,7 +590,7 @@ export function YearTrend({
   /** Actual years (default: the base year); earlier actual years come before it. */
   actual?: number[];
   onPick?: (year: string) => void;
-  fullDay?: boolean;
+  fullDay?: boolean | null;
 }) {
   const option = useMemo(() => {
     const c = COLORS[mode];

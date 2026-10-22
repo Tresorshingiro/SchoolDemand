@@ -2,11 +2,16 @@ import { useState, type FormEvent } from 'react';
 import { Link, Navigate, useNavigate, useSearchParams } from 'react-router-dom';
 import { ArrowLeft, Eye, EyeOff, Loader2, Lock, UserRound } from 'lucide-react';
 import { safeNext, useAuth } from '../auth';
+import { portalSignInAvailable, portalSignInFailed } from '../portalSignIn';
 import AuthFrame from './AuthFrame';
 
-/** Sign in with a MINEDUC GIS portal account: the API checks the username and password with the portal. */
+/**
+ * Sign in with a MINEDUC GIS portal account: the API checks the username and password with the portal. On the portal's
+ * own site the portal's sign-in can be used instead (pages that need a session go there by themselves; this page is
+ * shown after signing out, or when the portal sign-in did not complete).
+ */
 export default function LoginPage() {
-  const { user, checking, signIn } = useAuth();
+  const { user, checking, signIn, signInWithPortal } = useAuth();
   const navigate = useNavigate();
   const [params] = useSearchParams();
   const next = safeNext(params.get('next'));
@@ -15,7 +20,9 @@ export default function LoginPage() {
   const [show, setShow] = useState(false);
   const [remember, setRemember] = useState(false);
   const [error, setError] = useState('');
-  const [info, setInfo] = useState('');
+  const [info, setInfo] = useState(() => (portalSignInFailed()
+    ? 'The GIS portal sign-in did not complete. Sign in with your username and password, or try the portal sign-in again.'
+    : ''));
   const [loading, setLoading] = useState(false);
 
   if (!checking && user && !loading) return <Navigate to={next} replace />;
@@ -37,6 +44,13 @@ export default function LoginPage() {
       setPassword('');
       setLoading(false);
     }
+  }
+
+  function onPortal() {
+    setError('');
+    setInfo('');
+    setLoading(true); // the browser goes to the portal's sign-in and comes back signed in
+    signInWithPortal(next);
   }
 
   return (
@@ -87,6 +101,14 @@ export default function LoginPage() {
         <button type="submit" className="auth2-submit" disabled={loading}>
           {loading ? <><Loader2 size={16} className="auth2-spin" aria-hidden /> Signing in…</> : 'Sign in'}
         </button>
+
+        {portalSignInAvailable() && (
+          <p className="auth2-foot">
+            <button type="button" className="auth-link-btn" onClick={onPortal} disabled={loading}>
+              Continue with my GIS portal sign-in
+            </button>
+          </p>
+        )}
 
         <p className="auth2-foot">
           <Link to="/"><ArrowLeft size={14} aria-hidden /> Back to the home page</Link>

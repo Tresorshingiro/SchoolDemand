@@ -1,11 +1,11 @@
 import { useCallback, useMemo, useState, type ReactNode } from 'react';
 import {
-  applyFilters, fmt, fmtGap, gradeTotals, gradesByArea, pct, provinceOf, totals, totalsBy,
-  type Dataset, type Filters, type Totals,
+  ALL_LEVELS, applyFilters, bySchool, fmt, fmtGap, gradeTotals, gradesByArea, levelOf, pct, provinceOf, totals, totalsBy,
+  type Dataset, type Filters, type Level, type Totals,
 } from '../data';
 import type { Mode } from '../theme';
 import { printReport, usePrinting } from '../print';
-import SchoolMap from './SchoolMap';
+import SchoolMap, { type MapPlanning } from './SchoolMap';
 import SchoolTable from './SchoolTable';
 import SchoolPanel from './SchoolPanel';
 import SchoolSearch from './SchoolSearch';
@@ -83,27 +83,30 @@ function Stat({ icon, label, value, note, alert = false, className = '' }: {
   );
 }
 
-function Tiles({ t, notes, level }: {
-  t: Totals; notes: { available: string }; level: { label: string; capacity: number; fullDay: boolean };
-}) {
+/** How a level counts rooms: full day, double shift, or null for all levels together (both). */
+const roomRule = (level: Level) => (level.all ? null : level.fullDay);
+
+function Tiles({ t, notes, level }: { t: Totals; notes: { available: string }; level: Level }) {
   const avg = (a: number, b: number) => (b ? fmt(Math.round(a / b)) : '—');
+  const required = level.all
+    ? `per level: students ÷ ${level.capacity}, a room per stream in full-day levels`
+    : level.fullDay ? `a room per stream, ${level.capacity} per room` : `students ÷ ${level.capacity}, rounded up`;
   return (
     <div className="print-cols-tiles grid gap-4 xl:grid-cols-[4fr_3fr]">
       <section aria-label="What schools have">
         <div className="print-tiles-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
-          <Stat icon="school" label="Schools" value={fmt(t.schools)} note={`offering ${level.label.toLowerCase()}`} />
+          <Stat icon="school" label="Schools" value={fmt(t.schools)} note={level.all ? 'every level' : `offering ${level.label.toLowerCase()}`} />
           <Stat icon="students" label="Students" value={fmt(t.students)} note={`${avg(t.students, t.schools)} per school on average`} />
-          <Stat icon="groups" label="Class groups" value={fmt(t.classGroups)}
-            note={`${avg(t.students, t.classGroups)} students per group`} />
+          <Stat icon="groups" label="Class streams" value={fmt(t.classGroups)}
+            note={`${avg(t.students, t.classGroups)} students per stream`} />
           <Stat icon="door" label="Rooms available" value={fmt(t.available)} note={notes.available} />
         </div>
       </section>
       <section aria-label="What is needed">
         <div className="print-tiles-3 grid grid-cols-2 gap-3 sm:grid-cols-3">
-          <Stat icon="required" label="Rooms required" value={fmt(t.required)}
-            note={level.fullDay ? `a room per group, ${level.capacity} per room` : `students ÷ ${level.capacity}, rounded up`} />
-          <Stat icon="shift" label={dsName(level.fullDay)} value={fmt(t.doubleShift)}
-            note={`${pct(t.doubleShift, t.classGroups)} of class groups${level.fullDay ? ' · full day' : ''}`} />
+          <Stat icon="required" label="Rooms required" value={fmt(t.required)} note={required} />
+          <Stat icon="shift" label={dsName(roomRule(level))} value={fmt(t.doubleShift)}
+            note={`${pct(t.doubleShift, t.classGroups)} of class streams${level.fullDay ? ' · full day' : ''}`} />
           <Stat icon="alert" label="Classrooms short" value={fmt(t.short)} alert className="col-span-2 sm:col-span-1"
             note={`in ${fmt(t.deficitSchools)} schools · net ${fmtGap(t.netGap)}`} />
         </div>
@@ -134,30 +137,41 @@ interface Props {
   /** Line shown under the school name in the detail panel. */
   panelContext?: string;
   footer?: (capacity: number) => ReactNode;
+  /** Planning new schools on the map (projection page), given the current filters. */
+  planning?: (filters: Filters) => MapPlanning | undefined;
 }
 
 /** Filter bar, stat tiles, the shortage map, resource charts, then shortage charts and school table over one Dataset. */
 export default function Overview({
   data, mode, showLevels = false, controls, scopePrefix, top, shortageTop, afterCharts, notes, panelContext, footer,
+  planning,
 }: Props) {
-  const [filters, setFilters] = useState<Filters>({ level: PRE_PRIMARY, district: '', sector: '' });
+  const [filters, setFilters] = useState<Filters>({ level: PRE_PRIMARY, district: '', sector: '', school: null });
   const [selected, setSelected] = useState<number | null>(null);
   const printing = usePrinting();
 
-  const levelRows = useMemo(() => data.schools.filter((r) => r.l === filters.level), [data, filters.level]);
+  // "All levels": one row per school, its levels added together
+  const allRows = useMemo(() => bySchool(data.schools), [data]);
+  const levelRows = useMemo(
+    () => (filters.level === ALL_LEVELS ? allRows : data.schools.filter((r) => r.l === filters.level)),
+    [data, allRows, filters.level],
+  );
   const districts = useMemo(() => [...new Set(levelRows.map((r) => r.d))].sort(), [levelRows]);
   const sectors = useMemo(
     () => (filters.district ? [...new Set(levelRows.filter((r) => r.d === filters.district).map((r) => r.s))].sort() : []),
     [levelRows, filters.district],
   );
-  const rows = useMemo(() => applyFilters(data.schools, filters), [data, filters]);
+  const rows = useMemo(() => applyFilters(levelRows, filters), [levelRows, filters]);
   const codes = useMemo(() => new Set(rows.map((r) => r.c)), [rows]);
   const t = useMemo(() => totals(rows), [rows]);
 
-  // Area charts: districts for the whole level, or the sectors of the chosen district.
+  // Area charts: districts for the whole level, or the sectors of the chosen district (only the picked school's own
+  // figures when the search box picked one).
   const areaRows = useMemo(
-    () => (filters.district ? levelRows.filter((r) => r.d === filters.district) : levelRows),
-    [levelRows, filters.district],
+    () => (filters.district
+      ? levelRows.filter((r) => r.d === filters.district && (filters.school === null || r.c === filters.school))
+      : levelRows),
+    [levelRows, filters.district, filters.school],
   );
   const areaLabel = filters.district ? 'sector' : 'district';
   const areaKey = useCallback((r: { d: string; s: string }) => (filters.district ? r.s : r.d), [filters.district]);
@@ -195,33 +209,42 @@ export default function Overview({
 
   const pickArea = useCallback(
     (name: string) =>
-      setFilters((f) => (f.district ? { ...f, sector: f.sector === name ? '' : name } : { ...f, district: name, sector: '' })),
+      setFilters((f) => (f.district
+        ? { ...f, sector: f.sector === name ? '' : name, school: null }
+        : { ...f, district: name, sector: '', school: null })),
     [],
   );
   const closePanel = useCallback(() => setSelected(null), []);
-  // A school found with the search box: show it on the map and in the table (switching to a level it offers and
-  // dropping an area filter it is outside of), and open its details.
+  // A school found with the search box filters the whole page to it (in a level it offers; its district and sector
+  // become the area filters) and opens its details.
   const findSchool = useCallback((code: number, levels: number[]) => {
     const row = data.schools.find((r) => r.c === code);
-    setFilters((f) => {
-      const level = levels.includes(f.level) ? f.level : levels[0];
-      const inArea = row && (!f.district || row.d === f.district) && (!f.sector || row.s === f.sector);
-      return inArea ? { ...f, level } : { level, district: '', sector: '' };
-    });
+    if (!row) return;
+    setFilters((f) => ({
+      level: f.level === ALL_LEVELS || levels.includes(f.level) ? f.level : levels[0], district: row.d, sector: row.s,
+      school: code,
+    }));
     setSelected(code);
   }, [data]);
+  const clearArea = () => setFilters((f) => ({ ...f, district: '', sector: '', school: null }));
+  // Another level keeps the picked school when it offers that level (All levels always keeps it)
   const pickLevel = (i: number) => {
-    setFilters({ level: i, district: '', sector: '' });
-    setSelected(null);
+    const keep = filters.school !== null
+      && (i === ALL_LEVELS || data.schools.some((r) => r.c === filters.school && r.l === i));
+    setFilters(keep ? { ...filters, level: i } : { level: i, district: '', sector: '', school: null });
+    if (!keep) setSelected(null);
   };
+  const pickedSchool = filters.school === null ? undefined : data.schools.find((r) => r.c === filters.school);
   const gaps = useMemo(() => rows.map((r) => r.gap), [rows]);
 
   const { meta } = data;
-  const level = meta.levels[filters.level];
-  const scope = [filters.sector && `${filters.sector} sector`, filters.district && `${filters.district} district`]
+  const level = levelOf(meta, filters.level);
+  const rule = roomRule(level);
+  const tabs = [{ key: 'ALL', label: 'All', i: ALL_LEVELS }, ...meta.levels.map((l, i) => ({ key: l.key, label: l.label, i }))];
+  const scope = [pickedSchool?.n, filters.sector && `${filters.sector} sector`, filters.district && `${filters.district} district`]
     .filter(Boolean).join(', ') || 'All districts';
   const reportScope = scopePrefix ?? `${meta.built.slice(0, 4)} actual`;
-  const reportFile = ['Classroom_Sufficiency', level.label, filters.sector || filters.district || 'Rwanda', reportScope]
+  const reportFile = ['Classroom_Sufficiency', level.label, pickedSchool?.n || filters.sector || filters.district || 'Rwanda', reportScope]
     .join(' - ').replace(/[·:]/g, '').replace(/\s+/g, ' ').trim();
   const pickHint = filters.district ? 'Click a bar to filter to that sector.' : 'Click a bar to filter to that district.';
 
@@ -234,10 +257,10 @@ export default function Overview({
           {showLevels && (
             <>
               <div className="hidden gap-0.5 rounded-lg bg-[var(--line)] p-0.5 lg:flex" role="radiogroup" aria-label="School level">
-                {meta.levels.map((l, i) => (
-                  <button key={l.key} type="button" role="radio" aria-checked={filters.level === i}
-                    onClick={() => pickLevel(i)}
-                    className={`rounded-md px-3 py-1 text-sm ${filters.level === i
+                {tabs.map((l) => (
+                  <button key={l.key} type="button" role="radio" aria-checked={filters.level === l.i}
+                    onClick={() => pickLevel(l.i)} title={l.i === ALL_LEVELS ? 'Every school, all its levels together' : undefined}
+                    className={`rounded-md px-3 py-1 text-sm ${filters.level === l.i
                       ? 'bg-surface font-medium text-ink shadow-sm' : 'text-ink2 hover:text-ink'}`}>
                     {l.label}
                   </button>
@@ -245,25 +268,36 @@ export default function Overview({
               </div>
               <select aria-label="School level" value={filters.level} className="h-8 px-2 text-sm lg:hidden"
                 onChange={(e) => pickLevel(Number(e.target.value))}>
-                {meta.levels.map((l, i) => <option key={l.key} value={i}>{l.label}</option>)}
+                {tabs.map((l) => <option key={l.key} value={l.i}>{l.i === ALL_LEVELS ? 'All levels' : l.label}</option>)}
               </select>
             </>
           )}
           <select aria-label="District" value={filters.district} className="h-8 px-2 text-sm"
-            onChange={(e) => setFilters((f) => ({ ...f, district: e.target.value, sector: '' }))}>
+            onChange={(e) => setFilters((f) => ({ ...f, district: e.target.value, sector: '', school: null }))}>
             <option value="">All districts</option>
             {districts.map((d) => <option key={d}>{d}</option>)}
           </select>
           {filters.district && (
             <select aria-label="Sector" value={filters.sector} className="h-8 px-2 text-sm"
-              onChange={(e) => setFilters((f) => ({ ...f, sector: e.target.value }))}>
+              onChange={(e) => setFilters((f) => ({ ...f, sector: e.target.value, school: null }))}>
               <option value="">All sectors</option>
               {sectors.map((s) => <option key={s}>{s}</option>)}
             </select>
           )}
-          {(filters.district || filters.sector) && (
-            <button type="button" className="px-1 text-sm text-accent hover:underline"
-              onClick={() => setFilters((f) => ({ ...f, district: '', sector: '' }))}>
+          {pickedSchool && (
+            <span className="inline-flex h-8 max-w-[260px] items-center gap-1 rounded-md border border-accent bg-[var(--accent-soft)] pl-2.5 pr-1 text-sm text-ink"
+              title={`${pickedSchool.n} · code ${pickedSchool.c}`}>
+              <span className="truncate">{pickedSchool.n}</span>
+              <button type="button" aria-label={`Remove the school filter (${pickedSchool.n})`}
+                className="grid h-6 w-6 shrink-0 place-items-center rounded text-ink2 hover:text-ink"
+                onClick={() => setFilters((f) => ({ ...f, school: null }))}>
+                <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="2"
+                  strokeLinecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18" /></svg>
+              </button>
+            </span>
+          )}
+          {(filters.district || filters.sector || filters.school !== null) && (
+            <button type="button" className="px-1 text-sm text-accent hover:underline" onClick={clearArea}>
               Clear
             </button>
           )}
@@ -298,7 +332,7 @@ export default function Overview({
           <Card title="Schools on the map" sub="Colour shows the classroom gap. Use the legend on the map to filter; click a cluster to zoom in, a school for its details." className="print-span-2 print-map flex min-h-[600px] flex-col lg:col-span-2">
             <div className="flex-1">
               <SchoolMap rows={rows} mode={mode} selected={selected} onSelect={setSelected}
-                district={filters.district} sector={filters.sector} />
+                district={filters.district} sector={filters.sector} planning={planning?.(filters)} />
             </div>
           </Card>
           <div className="flex flex-col gap-4">
@@ -353,29 +387,33 @@ export default function Overview({
           <Card title={`Rooms available vs required by ${filters.district ? 'sector' : 'province'}`}
             sub={filters.district ? 'Sectors with the largest shortage first. Click a bar to filter.' : `Every district of each province, ${level.label.toLowerCase()}.`}>
             <div className="print-expand max-h-[320px] overflow-y-auto px-2 pb-3">
-              <CompareBars data={compare} mode={mode} fullDay={level.fullDay} horizontal
+              <CompareBars data={compare} mode={mode} fullDay={rule} horizontal
                 label={`Rooms available versus required by ${filters.district ? 'sector' : 'province'}`}
                 onPick={filters.district ? pickArea : undefined} />
             </div>
           </Card>
           <Card title="Rooms available vs required, by grade" sub={notes.gradeChart}>
-            <div className="px-2 pb-3"><GradeChart data={grades} mode={mode} fullDay={level.fullDay} /></div>
+            <div className="px-2 pb-3"><GradeChart data={grades} mode={mode} fullDay={rule} /></div>
           </Card>
-          <Card title={level.fullDay ? `Class groups without a room by ${areaLabel}` : `Double-shift share by ${areaLabel}`}
-            sub={level.fullDay
-              ? 'Full-day level: no double shift, so a class group that shares a room has no room of its own.'
-              : 'Class groups that share their room with another group.'}>
+          <Card title={rule === null ? `Double shift or no room by ${areaLabel}`
+            : rule ? `Class streams without a room by ${areaLabel}` : `Double-shift share by ${areaLabel}`}
+            sub={rule === null
+              ? 'Pre-Primary and Primary streams sharing a room (double shift), and streams of the full-day levels without a room of their own.'
+              : rule
+                ? 'Full-day level: no double shift, so a class stream that shares a room has no room of its own.'
+                : 'Class streams that share their room with another stream.'}>
             <div className="print-expand max-h-[320px] overflow-y-auto px-2 pb-2">
-              <DoubleShiftByArea data={byArea} mode={mode} areaLabel={areaLabel} fullDay={level.fullDay} />
+              <DoubleShiftByArea data={byArea} mode={mode} areaLabel={areaLabel} fullDay={rule} />
             </div>
           </Card>
         </div>
 
         {afterCharts?.(codes, filters, pickSchool)}
 
-        <Card title="Schools" sub="Largest deficits first. Click a row for details; click a column to sort. The filters here only narrow this table.">
+        <Card title="Schools" sub={`Largest deficits first. Click a row for details; click a column to sort. The filters here only narrow this table.${
+          level.all ? " All levels: a school's gap is the sum of its levels' shortages (spare rooms of one level do not cover another), else its spare rooms." : ''}`}>
           <SchoolTable rows={rows} mode={mode} selected={selected} onSelect={setSelected}
-            fullDay={level.fullDay} />
+            fullDay={rule} />
         </Card>
 
         {footer ? <footer className="space-y-1 pb-8 pt-2 text-xs text-muted">{footer(level.capacity)}</footer> : <div className="pb-4" />}

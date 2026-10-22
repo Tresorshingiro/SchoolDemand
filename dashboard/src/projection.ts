@@ -4,13 +4,14 @@
  * holds the helpers the page builds its tables and charts with.
  */
 import { getJson, sendJson } from './api';
-import { totals, type ComboRow, type Dataset, type GradeRow, type Meta, type SchoolLevel, type Totals } from './data';
+import { ALL_LEVELS, bySchool, totals, type ComboRow, type Dataset, type GradeRow, type Meta, type SchoolLevel, type Totals } from './data';
+import { plannedInfo, type PlannedOut, type PlannedSchoolInput } from './newSchools';
 
 export interface ProjectedLevel {
   level: number; // index into meta.levels
   grades: string[]; // projected grades (TVET without the L1-L2 short courses)
   capacity: number;
-  fullDay: boolean; // no double shift: every class group needs a room, combinations never share
+  fullDay: boolean; // no double shift: every class stream needs a room, combinations never share
 }
 
 /** GET /api/projection/config */
@@ -74,24 +75,29 @@ interface ProjectionRun {
   schools: number[][]; // [year, school, level, students, class groups, double shift, rooms, required, gap]
   grades: number[][]; // [year, school, grade index, students, class groups, double shift, rooms assigned, required, gap]
   combos: { names: string[]; rows: number[][] }; // [year, school, grade index, combination index, students, class groups]
+  planned?: PlannedOut[]; // the planned new schools of the run
 }
 
 /**
- * Run the projection on the server for a plan (the default plan uses the precomputed run). `info` supplies name,
- * district, sector and coordinates for each school (any 2026 row of the school in the current dataset).
+ * Run the projection on the server for a plan and planned new schools (the default plan without new schools uses the
+ * precomputed run). `info` supplies name, district, sector and coordinates for each school (any 2026 row of the school
+ * in the current dataset); planned schools (codes -1, -2 ...) are described by the server.
  */
-export async function fetchProjection(base: ProjectionBase, intake: Intake, info: Map<number, SchoolLevel>): Promise<ProjectedYear[]> {
-  const run = sameIntake(intake, base.population)
+export async function fetchProjection(base: ProjectionBase, intake: Intake, info: Map<number, SchoolLevel>,
+  schools: PlannedSchoolInput[] = []): Promise<{ years: ProjectedYear[]; planned: PlannedOut[] }> {
+  const run = sameIntake(intake, base.population) && !schools.length
     ? await getJson<ProjectionRun>('/projection/default')
-    : await sendJson<ProjectionRun>('POST', '/projection/run', { intake });
+    : await sendJson<ProjectionRun>('POST', '/projection/run', { intake, schools });
+  const planned = run.planned ?? [];
+  const lookup = planned.length ? new Map([...info, ...planned.map((p) => [p.c, plannedInfo(p)] as const)]) : info;
   const byYear = new Map<number, ProjectedYear>(run.years.map((year) => [year, { year, schools: [], grades: [], combos: [] }]));
   for (const [year, c, l, st, g, ds, a, r, gap] of run.schools) {
-    const school = info.get(c);
+    const school = lookup.get(c);
     if (school) byYear.get(year)!.schools.push({ ...school, l, st, g, ds, a, r, gap });
   }
   for (const [year, ...row] of run.grades) byYear.get(year)!.grades.push(row as GradeRow);
   for (const [year, c, gi, ni, st, g] of run.combos.rows) byYear.get(year)!.combos.push([c, gi, run.combos.names[ni], st, g]);
-  return run.years.map((y) => byYear.get(y)!);
+  return { years: run.years.map((y) => byYear.get(y)!), planned };
 }
 
 /* ------------------------------------------------------------------ saved plans (scenarios) */
@@ -134,8 +140,14 @@ export interface YearTotals extends Totals {
   year: number;
 }
 
+/** Totals of one level (ALL_LEVELS: every level, see bySchool) over the given schools. */
+export function levelTotals(rows: SchoolLevel[], level: number, codes: Set<number>): Totals {
+  const of = level === ALL_LEVELS ? bySchool(rows) : rows.filter((r) => r.l === level);
+  return totals(of.filter((r) => codes.has(r.c)));
+}
+
 export function yearTotals(result: ProjectedYear[], level: number, codes: Set<number>): YearTotals[] {
-  return result.map((py) => ({ year: py.year, ...totals(py.schools.filter((r) => r.l === level && codes.has(r.c))) }));
+  return result.map((py) => ({ year: py.year, ...levelTotals(py.schools, level, codes) }));
 }
 
 /** Students per grade (rows) and year (columns) for the given grades and schools. */

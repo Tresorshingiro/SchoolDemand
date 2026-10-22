@@ -10,7 +10,7 @@ const COLS: { key: Key; label: string; num?: boolean; hideSm?: boolean }[] = [
   { key: 'd', label: 'District', hideSm: true },
   { key: 's', label: 'Sector', hideSm: true },
   { key: 'st', label: 'Students', num: true },
-  { key: 'g', label: 'Class groups', num: true, hideSm: true },
+  { key: 'g', label: 'Class streams', num: true, hideSm: true },
   { key: 'ds', label: 'Double shift', num: true, hideSm: true },
   { key: 'a', label: 'Available', num: true },
   { key: 'r', label: 'Required', num: true },
@@ -36,10 +36,15 @@ const SHIFT_OPTIONS: Option[] = [
   { key: 'yes', label: 'With double shift', test: (r) => r.ds > 0 },
   { key: 'no', label: 'No double shift', test: (r) => r.ds === 0 },
 ];
-// Full-day levels (secondary, TVET, Professional Education): `ds` counts class groups without a room
+// Full-day levels (secondary, TVET, Professional Education): `ds` counts class streams without a room
 const NO_ROOM_OPTIONS: Option[] = [
-  { key: 'yes', label: 'Groups without a room', test: (r) => r.ds > 0 },
-  { key: 'no', label: 'Every group has a room', test: (r) => r.ds === 0 },
+  { key: 'yes', label: 'Streams without a room', test: (r) => r.ds > 0 },
+  { key: 'no', label: 'Every stream has a room', test: (r) => r.ds === 0 },
+];
+// All levels together: double shift (Pre-Primary, Primary) or streams without a room (full-day levels)
+const MIXED_OPTIONS: Option[] = [
+  { key: 'yes', label: 'Double shift or streams without a room', test: (r) => r.ds > 0 },
+  { key: 'no', label: 'Every stream has its own room', test: (r) => r.ds === 0 },
 ];
 const SIZE_OPTIONS: Option[] = [
   { key: 's1', label: 'Under 200 students', test: (r) => r.st < 200 },
@@ -54,8 +59,8 @@ interface Props {
   mode: Mode;
   selected: number | null;
   onSelect: (code: number) => void;
-  /** Full-day level: the double-shift column counts class groups without a room. */
-  fullDay: boolean;
+  /** Full-day level: the double-shift column counts class streams without a room (null: all levels, both). */
+  fullDay: boolean | null;
 }
 
 type FilterKey = 'gap' | 'shift' | 'size';
@@ -76,8 +81,9 @@ function FilterSelect({ label, value, all, options, counts, onChange }: {
 }
 
 export default function SchoolTable({ rows, mode, selected, onSelect, fullDay }: Props) {
-  const shiftOptions = fullDay ? NO_ROOM_OPTIONS : SHIFT_OPTIONS;
-  const colLabel = (c: (typeof COLS)[number]) => (c.key === 'ds' && fullDay ? 'No room' : c.label);
+  const shiftOptions = fullDay === null ? MIXED_OPTIONS : fullDay ? NO_ROOM_OPTIONS : SHIFT_OPTIONS;
+  const colLabel = (c: (typeof COLS)[number]) =>
+    (c.key === 'ds' && fullDay !== false ? (fullDay ? 'No room' : 'Double shift / no room') : c.label);
   const [sort, setSort] = useState<{ key: Key; asc: boolean }>({ key: 'gap', asc: true });
   const [query, setQuery] = useState('');
   const [filters, setFilters] = useState(NO_FILTERS);
@@ -147,7 +153,7 @@ export default function SchoolTable({ rows, mode, selected, onSelect, fullDay }:
         />
         <FilterSelect label="Classroom gap" value={filters.gap} all="Any gap" options={GAP_OPTIONS} counts={counts}
           onChange={(v) => setFilter('gap', v)} />
-        <FilterSelect label="Double shift" value={filters.shift} all={fullDay ? 'Any room situation' : 'Any double shift'}
+        <FilterSelect label="Double shift" value={filters.shift} all={fullDay === false ? 'Any double shift' : 'Any room situation'}
           options={shiftOptions} counts={counts}
           onChange={(v) => setFilter('shift', v)} />
         <FilterSelect label="School size" value={filters.size} all="Any size" options={SIZE_OPTIONS} counts={counts}
@@ -193,8 +199,15 @@ export default function SchoolTable({ rows, mode, selected, onSelect, fullDay }:
                   onKeyDown={(e) => (e.key === 'Enter' || e.key === ' ') && (e.preventDefault(), onSelect(r.c))}
                   className={`cursor-pointer border-b border-line hover:bg-[var(--line)] ${selected === r.c ? 'bg-[var(--line)]' : ''}`}>
                   <td className="px-3 py-2">
-                    <div className="font-medium text-ink">{r.n}</div>
-                    <div className="text-xs text-muted">{r.c}{r.x === null ? ' · not on map' : ''}</div>
+                    <div className="font-medium text-ink">
+                      {r.n}
+                      {r.c < 0 && (
+                        <span className="ml-1.5 rounded border border-accent bg-[var(--accent-soft)] px-1 py-px text-[10px] font-semibold uppercase text-accent">
+                          planned
+                        </span>
+                      )}
+                    </div>
+                    <div className="text-xs text-muted">{r.c < 0 ? 'new school' : r.c}{r.x === null ? ' · not on map' : ''}</div>
                   </td>
                   <td className="print-cell hidden px-3 py-2 text-ink2 md:table-cell">{r.d}</td>
                   <td className="print-cell hidden px-3 py-2 text-ink2 md:table-cell">{r.s}</td>

@@ -148,13 +148,22 @@ interface Props {
   baseByDistrict: Map<string, number[]>;
   /** District picked in the page filter: show only its row. */
   district?: string;
+  /** School picked with the search box: its own students of the grade per year (index 0 = base year), shown under
+   * its district's row (the plan itself is edited per district) and in the chart. */
+  school?: SchoolEntrants;
   mode: Mode;
   /** Saved plans; without it the planner only edits the plan on screen. */
   scenarios?: ScenarioControls | null;
 }
 
+/** One school's students of each entry grade per year (index 0 = base year, then the new students). */
+export interface SchoolEntrants {
+  name: string;
+  byGrade: Record<string, number[]>;
+}
+
 /** District x year table of new N1 students; drives the whole projection page. */
-export default function IntakePlanner({ base, intake, onChange, grade, baseByDistrict, district, mode, scenarios }: Props) {
+export default function IntakePlanner({ base, intake, onChange, grade, baseByDistrict, district, school, mode, scenarios }: Props) {
   const years = base.years.slice(1);
   const defaults = base.population[grade];
   const estimated = new Set(base.estimated[grade] ?? []);
@@ -248,26 +257,47 @@ export default function IntakePlanner({ base, intake, onChange, grade, baseByDis
                   ))}
                 </tr>
               ))}
+              {school && (
+                <tr className="border-b border-line bg-[var(--accent-soft)]">
+                  <td className="px-2 py-1.5 text-ink" title="Its share of the district's plan, by its catchment area">↳ {school.name}</td>
+                  {school.byGrade[grade].map((v, yi) => (
+                    <td key={yi} className={`num px-2 py-1.5 text-right ${yi === 0 ? 'text-ink2' : 'text-ink'}`}>{fmt(v)}</td>
+                  ))}
+                </tr>
+              )}
             </tbody>
-            <tfoot className="sticky bottom-0 bg-surface">
-              <tr className="border-t border-line font-semibold text-ink">
-                <td className="px-2 py-1.5">{districts.length === 1 ? 'Total' : 'Rwanda'}</td>
-                <td className="num px-2 py-1.5 text-right">{fmt(baseTotal)}</td>
-                {years.map((y, yi) => <td key={y} className="num px-2 py-1.5 text-right">{fmt(total(yi))}</td>)}
-              </tr>
-            </tfoot>
+            {!school && (
+              <tfoot className="sticky bottom-0 bg-surface">
+                <tr className="border-t border-line font-semibold text-ink">
+                  <td className="px-2 py-1.5">{districts.length === 1 ? 'Total' : 'Rwanda'}</td>
+                  <td className="num px-2 py-1.5 text-right">{fmt(baseTotal)}</td>
+                  {years.map((y, yi) => <td key={y} className="num px-2 py-1.5 text-right">{fmt(total(yi))}</td>)}
+                </tr>
+              </tfoot>
+            )}
           </table>
         </div>
         <div className="print-span-2 lg:col-span-2">
           <div className="text-xs font-medium text-ink2">
-            New {grade} per year · {districts.length === 1 ? district : 'Rwanda'}
+            New {grade} per year · {school?.name ?? (districts.length === 1 ? district : 'Rwanda')}
           </div>
-          <EntrantsChart grade={grade} years={base.years} baseYear={base.baseYear} base={baseTotal}
-            plan={years.map((_, yi) => total(yi))}
-            defaults={years.map((_, yi) => districts.reduce((s, d) => s + (defaults[d]?.[yi] ?? 0), 0))}
-            defaultLabel={base.defaultLabel} mode={mode} />
+          {school ? (
+            <EntrantsChart grade={grade} years={base.years} baseYear={base.baseYear} base={school.byGrade[grade][0]}
+              plan={school.byGrade[grade].slice(1)} mode={mode} />
+          ) : (
+            <EntrantsChart grade={grade} years={base.years} baseYear={base.baseYear} base={baseTotal}
+              plan={years.map((_, yi) => total(yi))}
+              defaults={years.map((_, yi) => districts.reduce((s, d) => s + (defaults[d]?.[yi] ?? 0), 0))}
+              defaultLabel={base.defaultLabel} mode={mode} />
+          )}
         </div>
       </div>
+      {school && (
+        <p className="mt-2 text-xs text-muted">
+          The plan is set per district: {district}'s row is the plan, {school.name} gets its share of it in proportion to
+          the children aged {base.intakes[grade]} in its catchment area. Remove the school filter to see every school of the district.
+        </p>
+      )}
     </div>
   );
 }
@@ -284,14 +314,19 @@ interface FedProps {
   /** Students per district and year for each grade in `targets` (index 0 = base year). */
   byDistrict: Record<string, Map<string, number[]>>;
   district?: string;
+  /** School picked with the search box: its row replaces the districts'. */
+  school?: SchoolEntrants;
   mode: Mode;
 }
 
 /** Read-only district x year table of the new students of an entry grade fed by an earlier grade. */
-export function FedEntrants({ base, grade, source, targets, sameSchool = false, byDistrict, district, mode }: FedProps) {
+export function FedEntrants({ base, grade, source, targets, sameSchool = false, byDistrict: districtRows, district, school, mode }: FedProps) {
+  const byDistrict = school
+    ? Object.fromEntries(targets.map((t) => [t, new Map([[school.name, school.byGrade[t]]])]))
+    : districtRows;
   const rows = byDistrict[grade];
   const all = [...rows.keys()].sort();
-  const districts = district && rows.has(district) ? [district] : all;
+  const districts = school ? [school.name] : district && rows.has(district) ? [district] : all;
   const split = targets.length > 1;
   const mix = (d: string) => {
     const tot = targets.reduce((s, t) => s + (byDistrict[t].get(d)?.[0] ?? 0), 0);
@@ -305,7 +340,7 @@ export function FedEntrants({ base, grade, source, targets, sameSchool = false, 
           <table className="w-full text-sm">
             <thead className="sticky top-0 z-10 bg-surface">
               <tr className="border-b border-line text-xs text-muted">
-                <th className="px-2 py-1.5 text-left font-medium">District</th>
+                <th className="px-2 py-1.5 text-left font-medium">{school ? 'School' : 'District'}</th>
                 {split && <th className="px-2 py-1.5 text-right font-medium">Share of {source}</th>}
                 {base.years.map((y, yi) => (
                   <th key={y} className="px-2 py-1.5 text-right font-medium">{yi === 0 ? `${grade} ${y}*` : y}</th>
@@ -334,7 +369,7 @@ export function FedEntrants({ base, grade, source, targets, sameSchool = false, 
         </div>
         <div className="print-span-2 lg:col-span-2">
           <div className="text-xs font-medium text-ink2">
-            New {grade} per year · {districts.length === 1 ? district : 'Rwanda'}
+            New {grade} per year · {districts.length === 1 ? districts[0] : 'Rwanda'}
           </div>
           <EntrantsChart grade={grade} years={base.years} baseYear={base.baseYear} base={sum(0)}
             plan={base.years.slice(1).map((_, yi) => sum(yi + 1))} mode={mode} />
@@ -342,7 +377,9 @@ export function FedEntrants({ base, grade, source, targets, sameSchool = false, 
       </div>
       <p className="mt-2 text-xs text-muted">
         * {grade} students enrolled in {base.baseYear}; the year columns are new {grade} students.{' '}
-        {districts.length === 1 && <>Showing {district} only — clear the district filter to see all districts. </>}
+        {school
+          ? <>Showing {school.name} only — remove the school filter to see its district. </>
+          : districts.length === 1 && <>Showing {district} only — clear the district filter to see all districts. </>}
         {sameSchool ? (
           <>
             New {grade} = the {source} of the year before: each school's {source} moves up to its own {grade}; the {source} of

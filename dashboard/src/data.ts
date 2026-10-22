@@ -8,11 +8,12 @@ export interface SchoolLevel {
   s: string; // sector
   l: number; // level index into meta.levels
   st: number; // total students
-  g: number; // total classrooms (class groups)
+  g: number; // total classrooms (class streams)
   ds: number; // classrooms in double shift
   a: number; // classrooms available (physical rooms)
   r: number; // required classrooms
   gap: number; // available - required
+  net?: number; // "All levels" rows only: available - required (gap is the sum of the levels' shortages there)
   y: number | null; // latitude (null when missing / outside Rwanda)
   x: number | null; // longitude
 }
@@ -25,8 +26,10 @@ export interface Level {
   label: string;
   grades: string[];
   capacity: number;
-  /** Full-day level (secondary, TVET, Professional Education): no double shift — `ds` counts class groups without a room. */
+  /** Full-day level (secondary, TVET, Professional Education): no double shift — `ds` counts class streams without a room. */
   fullDay: boolean;
+  /** The "All levels" view: every level together (see allLevel). */
+  all?: boolean;
 }
 
 export interface Meta {
@@ -85,11 +88,50 @@ export interface Filters {
   level: number;
   district: string;
   sector: string;
+  school: number | null; // one school picked with the search box (its district and sector are set with it)
+}
+
+/** Filters.level of the "All levels" tab: every school, its levels added together (bySchool). */
+export const ALL_LEVELS = -1;
+
+/** The "All levels" view as a level: every grade, the common capacity. */
+export const allLevel = (meta: Meta): Level => ({
+  key: 'ALL', label: 'All levels', grades: meta.levels.flatMap((l) => l.grades), capacity: meta.levels[0]?.capacity ?? 46,
+  fullDay: false, all: true,
+});
+
+/** The level of a Filters.level (ALL_LEVELS included). */
+export const levelOf = (meta: Meta, level: number): Level => (level === ALL_LEVELS ? allLevel(meta) : meta.levels[level]);
+
+/**
+ * One row per school with its levels added together (level ALL_LEVELS). Its gap is the sum of the levels' shortages
+ * when any level is short — spare rooms of one level do not cover another's shortage — else the spare rooms; `net`
+ * keeps available - required.
+ */
+export function bySchool(rows: SchoolLevel[]): SchoolLevel[] {
+  const out = new Map<number, SchoolLevel & { short: number }>();
+  for (const r of rows) {
+    const s = out.get(r.c);
+    if (!s) {
+      out.set(r.c, { ...r, l: ALL_LEVELS, net: r.gap, short: Math.min(r.gap, 0) });
+      continue;
+    }
+    s.st += r.st;
+    s.g += r.g;
+    s.ds += r.ds;
+    s.a += r.a;
+    s.r += r.r;
+    s.gap += r.gap;
+    s.net! += r.gap;
+    s.short += Math.min(r.gap, 0);
+  }
+  return [...out.values()].map(({ short, ...s }) => ({ ...s, gap: short < 0 ? short : s.gap }));
 }
 
 export function applyFilters(rows: SchoolLevel[], f: Filters): SchoolLevel[] {
   return rows.filter(
-    (r) => r.l === f.level && (!f.district || r.d === f.district) && (!f.sector || r.s === f.sector),
+    (r) => r.l === f.level && (!f.district || r.d === f.district) && (!f.sector || r.s === f.sector)
+      && (f.school === null || r.c === f.school),
   );
 }
 
@@ -118,7 +160,7 @@ export function totals(rows: SchoolLevel[]): Totals {
     t.doubleShift += r.ds;
     t.available += r.a;
     t.required += r.r;
-    t.netGap += r.gap;
+    t.netGap += r.net ?? r.gap;
     if (r.gap < 0) {
       t.short -= r.gap;
       t.deficitSchools += 1;
@@ -152,7 +194,7 @@ export interface GradeTotals {
 
 /** Per-grade totals for the grades of one level, restricted to the given schools. */
 export function gradeTotals(grades: GradeRow[], meta: Meta, level: number, schoolCodes: Set<number>): GradeTotals[] {
-  const levelGrades = meta.levels[level].grades;
+  const levelGrades = levelOf(meta, level).grades;
   const byGrade = new Map<string, GradeTotals>(
     levelGrades.map((g) => [g, { grade: g, students: 0, classGroups: 0, doubleShift: 0, available: 0, required: 0, short: 0 }]),
   );
@@ -186,10 +228,10 @@ export interface AreaGrades {
   classGroups: number[];
 }
 
-/** Students and class groups per area (district, sector...) and grade of one level, for the given school rows. */
+/** Students and class streams per area (district, sector...) and grade of one level, for the given school rows. */
 export function gradesByArea(grades: GradeRow[], meta: Meta, level: number, rows: SchoolLevel[],
   key: (r: SchoolLevel) => string): AreaGrades[] {
-  const levelGrades = meta.levels[level].grades;
+  const levelGrades = levelOf(meta, level).grades;
   const areaOf = new Map(rows.map((r) => [r.c, key(r)]));
   const out = new Map<string, AreaGrades>();
   for (const [school, gi, st, cg] of grades) {
