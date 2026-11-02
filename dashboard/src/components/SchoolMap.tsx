@@ -19,7 +19,6 @@ import SimpleFillSymbol from '@arcgis/core/symbols/SimpleFillSymbol';
 import TextSymbol from '@arcgis/core/symbols/TextSymbol';
 import Graphic from '@arcgis/core/Graphic';
 import Polygon from '@arcgis/core/geometry/Polygon';
-import Circle from '@arcgis/core/geometry/Circle';
 import Point from '@arcgis/core/geometry/Point';
 import Extent from '@arcgis/core/geometry/Extent';
 import Viewpoint from '@arcgis/core/Viewpoint';
@@ -249,10 +248,12 @@ interface Hover {
 
 /** Planning a new school on the map (projection page): the planned schools, the placing mode and its form. */
 export interface MapPlanning {
-  planned: PlannedOut[]; // drawn with their walking-distance ring (also when switched off: dimmed)
+  planned: PlannedOut[]; // drawn with their walking area (also when switched off: dimmed)
   dimmed: boolean; // the plan of new schools is switched off
+  available: boolean; // false: no walking network published, no new school can be planned
+  reachable: { latitude: number; longitude: number }[]; // the schools within walking distance, highlighted on the map
   placing: boolean; // the next click on the map places a new school
-  draft: { latitude: number; longitude: number; km: number } | null; // the school being placed or edited
+  draft: { latitude: number; longitude: number } | null; // the school being placed or edited
   form: ReactNode; // its form, shown over the map
   onPlacing: (on: boolean) => void;
   onPlace: (latitude: number, longitude: number) => void;
@@ -272,18 +273,29 @@ interface Props {
 
 const PLANNED_COLOR = [250, 178, 25] as const; // amber, as the outline of the picked area
 
-/** A planned school's pin, name and walking-distance ring. */
-function plannedGraphics(latitude: number, longitude: number, km: number, name: string | null, alpha = 1): Graphic[] {
+/** The rings of the walking area's outline (GeoJSON Polygon or MultiPolygon). */
+function areaRings(area: PlannedOut['area']): number[][][] {
+  if (!area) return [];
+  const rings = area.type === 'Polygon' ? (area.coordinates as number[][][]) : (area.coordinates as number[][][][]).flat();
+  // GeoJSON outer rings run counter-clockwise, ArcGIS expects them clockwise
+  return rings.map((ring) => {
+    const turn = ring.slice(1).reduce((sum, p, i) => sum + (p[0] - ring[i][0]) * (p[1] + ring[i][1]), 0);
+    return turn < 0 ? [...ring].reverse() : ring;
+  });
+}
+
+/** A planned school's pin, name and the area reachable on foot (none while it is only being placed). */
+function plannedGraphics(latitude: number, longitude: number, area: PlannedOut['area'], name: string | null, alpha = 1): Graphic[] {
   const center = new Point({ latitude, longitude });
-  const ring = new Circle({ center, radius: km, radiusUnit: 'kilometers', geodesic: true, numberOfPoints: 90 });
+  const rings = areaRings(area);
   const out = [
-    new Graphic({
-      geometry: ring,
+    ...(rings.length ? [new Graphic({
+      geometry: new Polygon({ rings, spatialReference: { wkid: 4326 } }),
       symbol: new SimpleFillSymbol({
         color: [255, 255, 255, 0.12 * alpha],
         outline: { color: [255, 255, 255, 0.95 * alpha], width: 2, style: 'dash' },
       }),
-    }),
+    })] : []),
     new Graphic({
       geometry: center,
       attributes: { planned: 1 },
@@ -651,20 +663,31 @@ export default function SchoolMap({ rows, mode, selected, onSelect, district = '
   // Planned new schools and the one being placed: pin, name and walking-distance ring
   const plannedList = planning?.planned;
   const draft = planning?.draft;
+  const reachableKey = JSON.stringify(planning?.reachable ?? []); // a new array each render: redraw only when it changes
+  const reachable = useMemo(() => JSON.parse(reachableKey) as MapPlanning['reachable'], [reachableKey]);
   const dimmed = planning?.dimmed ?? false;
   useEffect(() => {
     const layer = planLayerRef.current;
     if (!layer || !ready) return;
     layer.removeAll();
+    for (const s of reachable ?? []) {
+      layer.add(new Graphic({
+        geometry: new Point(s),
+        symbol: new SimpleMarkerSymbol({
+          style: 'circle', size: 15, color: [0, 0, 0, 0],
+          outline: { color: [...PLANNED_COLOR, dimmed ? 0.45 : 1], width: 2.5 },
+        }),
+      }));
+    }
     for (const p of plannedList ?? []) {
-      const graphics = plannedGraphics(p.y, p.x, p.km, p.n, dimmed ? 0.45 : 1);
+      const graphics = plannedGraphics(p.y, p.x, p.area, p.n, dimmed ? 0.45 : 1);
       graphics.forEach((g) => {
         if (g.attributes?.planned) g.attributes = { planned: 1, code: p.c };
       });
       layer.addMany(graphics);
     }
-    if (draft) layer.addMany(plannedGraphics(draft.latitude, draft.longitude, draft.km, null));
-  }, [plannedList, draft, dimmed, ready]);
+    if (draft) layer.addMany(plannedGraphics(draft.latitude, draft.longitude, null, null));
+  }, [plannedList, reachable, draft, dimmed, ready]);
 
   // Esc leaves the placing mode
   const placing = planning?.placing ?? false;
@@ -799,11 +822,20 @@ export default function SchoolMap({ rows, mode, selected, onSelect, district = '
       {/* Top right: plan a new school, and its form */}
       {ready && planning && (
         <div className="absolute right-3 top-3 z-10 flex w-[290px] flex-col items-end gap-2 print:hidden">
-          <button type="button" aria-pressed={planning.placing} onClick={() => planning.onPlacing(!planning.placing)}
-            className={`${panel} px-3 py-1.5 text-xs font-semibold ${planning.placing ? 'border-accent bg-accent text-white' : 'text-ink hover:text-accent'}`}>
-            {planning.placing ? 'Click on the map… (Esc to cancel)' : '+ Plan a new school'}
-          </button>
+          {planning.available ? (
+            <button type="button" aria-pressed={planning.placing} onClick={() => planning.onPlacing(!planning.placing)}
+              className={`${panel} px-3 py-1.5 text-xs font-semibold ${planning.placing ? 'border-accent bg-accent text-white' : 'text-ink hover:text-accent'}`}>
+              {planning.placing ? 'Click on the map… (Esc to cancel)' : '+ Plan a new school'}
+            </button>
+          ) : (
+            <div className={`${panel} px-3 py-1.5 text-xs text-muted`}>No walking network published yet.</div>
+          )}
           {planning.form && <div className={`${panel} max-h-[520px] w-full overflow-y-auto`}>{planning.form}</div>}
+        </div>
+      )}
+      {ready && (planning?.planned.length ?? 0) > 0 && (
+        <div className="pointer-events-none absolute bottom-7 right-3 z-10 rounded bg-black/55 px-1.5 py-0.5 text-[10px] text-white">
+          Walking network © OpenStreetMap contributors
         </div>
       )}
       {ready && planning?.placing && (

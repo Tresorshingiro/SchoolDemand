@@ -30,27 +30,47 @@ export interface ProjectionBase {
   catchment: { years: number[]; rows: number[][] };
   defaultLabel: string; // name of the default plan
   combos: string[][]; // per level: its combinations, most students first (empty = no combinations)
+  /** Repetition and dropout of each district (and Rwanda) the projection applies: [repetition, dropout] as shares. */
+  rates: { schoolYear: string; districts: Record<string, [number, number]> };
+  /** A walking network is published: planned new schools are available. */
+  walkingNetwork: boolean;
 }
+
+/** What a person is trying on the dashboard: one number for every level, and the two rates. Never saved. */
+export interface Assumptions {
+  capacity: number; // students per classroom
+  repetition: boolean;
+  dropout: boolean;
+}
+
+export const DEFAULT_ASSUMPTIONS: Assumptions = { capacity: 46, repetition: true, dropout: true };
+export const CAPACITY_MIN = 20;
+export const CAPACITY_MAX = 100;
+
+export const isDefaultAssumptions = (a: Assumptions) =>
+  a.capacity === DEFAULT_ASSUMPTIONS.capacity && a.repetition && a.dropout;
+
+/** What differs from the defaults, for the scope text: "40 per classroom · Repetition off"; '' at the defaults. */
+export const assumptionsLabel = (a: Assumptions) => [
+  a.capacity !== DEFAULT_ASSUMPTIONS.capacity ? `${a.capacity} per classroom` : '',
+  a.repetition ? '' : 'Repetition off',
+  a.dropout ? '' : 'Dropout off',
+].filter(Boolean).join(' · ');
+
+/** The switches, always stated in the printed report. */
+export const assumptionsReport = (a: Assumptions) =>
+  `Repetition ${a.repetition ? 'on' : 'off'} · Dropout ${a.dropout ? 'on' : 'off'}`;
 
 /** New students per entry grade (N1) and district, for years[1..]. */
 export type Intake = Record<string, Record<string, number[]>>;
 
-let baseCache: Promise<ProjectionBase> | null = null;
-
-export function loadProjectionBase(): Promise<ProjectionBase> {
-  if (!baseCache) {
-    baseCache = getJson<ProjectionBase>('/projection/config');
-    baseCache.catch(() => {
-      baseCache = null;
-    });
-  }
-  return baseCache;
-}
+/** Asked each time the page opens: an admin may just have published data, such as the walking network. */
+export const loadProjectionBase = () => getJson<ProjectionBase>('/projection/config');
 
 const copyIntake = (v: Intake): Intake =>
   Object.fromEntries(Object.entries(v).map(([g, t]) => [g, Object.fromEntries(Object.entries(t).map(([d, a]) => [d, [...a]]))]));
 
-/** The default plan: new N1 = the children aged 3 in the schools' catchments (no repetition modelled). */
+/** The default plan: new N1 = the children aged 3 in the schools' catchments. */
 export const defaultIntake = (base: ProjectionBase): Intake => copyIntake(base.population);
 
 /** Does the plan for one entry grade (or every entry grade) equal `b`? */
@@ -84,10 +104,11 @@ interface ProjectionRun {
  * in the current dataset); planned schools (codes -1, -2 ...) are described by the server.
  */
 export async function fetchProjection(base: ProjectionBase, intake: Intake, info: Map<number, SchoolLevel>,
-  schools: PlannedSchoolInput[] = []): Promise<{ years: ProjectedYear[]; planned: PlannedOut[] }> {
-  const run = sameIntake(intake, base.population) && !schools.length
+  schools: PlannedSchoolInput[] = [], assumptions: Assumptions = DEFAULT_ASSUMPTIONS,
+): Promise<{ years: ProjectedYear[]; planned: PlannedOut[] }> {
+  const run = sameIntake(intake, base.population) && !schools.length && isDefaultAssumptions(assumptions)
     ? await getJson<ProjectionRun>('/projection/default')
-    : await sendJson<ProjectionRun>('POST', '/projection/run', { intake, schools });
+    : await sendJson<ProjectionRun>('POST', '/projection/run', { intake, schools, ...assumptions });
   const planned = run.planned ?? [];
   const lookup = planned.length ? new Map([...info, ...planned.map((p) => [p.c, plannedInfo(p)] as const)]) : info;
   const byYear = new Map<number, ProjectedYear>(run.years.map((year) => [year, { year, schools: [], grades: [], combos: [] }]));
@@ -126,10 +147,10 @@ export const updateScenario = (id: number, name: string, intake: Intake, descrip
 export const deleteScenario = (id: number) => sendJson<void>('DELETE', `/scenarios/${id}`);
 export const copyScenario = (id: number, name: string) => sendJson<Scenario>('POST', `/scenarios/${id}/copy`, { name });
 
-/** meta with each level's grades replaced by the projected ones (TVET without L1-L2). */
-export function projectionMeta(base: ProjectionBase, meta: Meta): Meta {
+/** meta with each level's grades replaced by the projected ones (TVET without L1-L2) and the students per classroom. */
+export function projectionMeta(base: ProjectionBase, meta: Meta, capacity: number): Meta {
   const byLevel = new Map(base.levels.map((l) => [l.level, l.grades]));
-  return { ...meta, levels: meta.levels.map((l, i) => ({ ...l, grades: byLevel.get(i) ?? l.grades })) };
+  return { ...meta, levels: meta.levels.map((l, i) => ({ ...l, capacity, grades: byLevel.get(i) ?? l.grades })) };
 }
 
 export const yearDataset = (py: ProjectedYear, meta: Meta): Dataset => ({

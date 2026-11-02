@@ -22,7 +22,7 @@ export default function App() {
     loadDataset().then(setData).catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)));
   }, []);
 
-  // Leave the dashboard first: once the user is cleared, its guard would send the page to the sign-in form instead
+  // Signing out ends the session here and on the portal; the browser then leaves for the portal's sign-out
   const onSignOut = () => {
     navigate('/', { replace: true });
     void signOut();

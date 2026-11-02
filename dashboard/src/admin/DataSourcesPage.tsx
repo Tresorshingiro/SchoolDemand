@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Download, FileSpreadsheet, History, MapPin, School, Upload, Users2, type LucideIcon } from 'lucide-react';
+import {
+  Download, FileSpreadsheet, Footprints, GraduationCap, History, MapPin, Repeat, School, Upload, Users2, type LucideIcon,
+} from 'lucide-react';
 import { listSources, templateUrl, type DataKind, type ImportRun, type SourceCard } from './api';
 import UploadPanel from './UploadPanel';
 import { Alert, PageHeader, Panel, Pill, btn } from './ui';
@@ -11,6 +13,9 @@ export const KIND_INFO: Record<DataKind, { icon: LucideIcon; text: string }> = {
   school_data: { icon: School, text: 'Schools, rooms and class streams of a school year. The newest year is the base of the projection.' },
   catchment: { icon: MapPin, text: "Children aged 3 in each pre-primary school's catchment area, per year." },
   nisr_population: { icon: Users2, text: 'Children aged 3 per district and year: the totals of the default N1 plan.' },
+  flow_rates: { icon: Repeat, text: 'District repetition and dropout rates: how students move between grades in the projection.' },
+  teachers: { icon: GraduationCap, text: 'Teachers per school and level of a school year: pupils per teacher on the dashboard.' },
+  walking_network: { icon: Footprints, text: 'OpenStreetMap roads and paths (Rwanda .osm.pbf extract): how far planned schools reach on foot. Planned schools need it.' },
 };
 
 function LiveRow({ run }: { run: ImportRun }) {
@@ -59,9 +64,11 @@ export default function DataSourcesPage() {
                   <p className="mt-0.5 text-[13px] text-muted">{KIND_INFO[c.kind].text}</p>
                 </div>
                 <div className="flex gap-2">
-                  <a className={btn.secondary} href={templateUrl(c.kind)}>
-                    <Download size={15} aria-hidden /> Template
-                  </a>
+                  {c.kind !== 'walking_network' && (
+                    <a className={btn.secondary} href={templateUrl(c.kind)}>
+                      <Download size={15} aria-hidden /> Template
+                    </a>
+                  )}
                   <button type="button" className={btn.primary} onClick={() => setUpload(c.kind)}>
                     <Upload size={15} aria-hidden /> Upload
                   </button>
@@ -73,6 +80,7 @@ export default function DataSourcesPage() {
                     {c.kind === 'nisr_population' ? 'Nothing published: the default N1 plan uses the catchment totals.' : 'Nothing published yet.'}
                   </p>
                 )}
+                {c.missing_file && <Alert tone="error">The network file is missing. Upload the file again and publish it.</Alert>}
                 {c.connector && <p className="text-[12px] text-muted">MINEDUC API connector: {c.connector}.</p>}
               </div>
             </Panel>
@@ -80,7 +88,8 @@ export default function DataSourcesPage() {
         })}
       </div>
       {upload && (
-        <UploadPanel kind={upload} suggestedYear={newestYear ? newestYear + 1 : new Date().getFullYear()}
+        <UploadPanel kind={upload}
+          suggestedYear={!newestYear ? new Date().getFullYear() : upload === 'teachers' ? newestYear : newestYear + 1}
           onClose={() => setUpload(null)} />
       )}
     </div>

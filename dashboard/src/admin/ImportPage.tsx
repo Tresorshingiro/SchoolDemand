@@ -4,7 +4,7 @@ import { AlertTriangle, ArrowLeft, CheckCircle2, ChevronRight, Download, FileSpr
 import { sendJson } from '../api';
 import { fmt } from '../data';
 import {
-  BUSY, STATUS_LABEL, fileUrl, getImport, importAction, issuesUrl, type ImportDetail, type LevelChange, type Problem,
+  BUSY, REQUIRED_KINDS, STATUS_LABEL, fileUrl, getImport, importAction, issuesUrl, type ImportDetail, type LevelChange, type Problem,
 } from './api';
 import { StatusPill } from './HistoryPage';
 import { Alert, PageHeader, Panel, StatCard, btn, td, th } from './ui';
@@ -148,7 +148,10 @@ export default function ImportPage() {
   const problems = report ? report.errors.length + report.warnings.length : 0;
   const summary = report?.summary ?? {};
   const figures = Object.entries(summary).filter(([, v]) => typeof v === 'number') as [string, number][];
-  const actions = !working && (d.can_publish || ['ready', 'failed'].includes(d.status) || (d.is_live && d.kind !== 'catchment'));
+  const withdrawable = d.is_live && !REQUIRED_KINDS.includes(d.kind);
+  const actions = !working && (d.can_publish || ['ready', 'failed'].includes(d.status) || withdrawable);
+  const what = d.kind === 'school_data' ? `${d.academic_year} school data`
+    : d.kind === 'teachers' ? `${d.academic_year} teachers` : 'NISR data';
 
   return (
     <div className="pb-4">
@@ -220,9 +223,9 @@ export default function ImportPage() {
               <button type="button" className={btn.secondary} disabled={busy} onClick={() => void run('discard', 'Discard this import?')}>Discard</button>
             )}
             {d.status === 'failed' && <button type="button" className={btn.secondary} disabled={busy} onClick={() => void run('recheck')}>Check again</button>}
-            {d.is_live && d.kind !== 'catchment' && (
+            {withdrawable && (
               <button type="button" className={btn.danger} disabled={busy}
-                onClick={() => void run('withdraw', `Withdraw this ${d.kind === 'school_data' ? `${d.academic_year} school data` : 'NISR data'} from the site?`)}>
+                onClick={() => void run('withdraw', `Withdraw this ${what} from the site?`)}>
                 Withdraw
               </button>
             )}

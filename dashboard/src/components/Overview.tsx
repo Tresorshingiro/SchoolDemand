@@ -136,6 +136,8 @@ interface Props {
   notes: { available: string; gradeChart: string };
   /** Line shown under the school name in the detail panel. */
   panelContext?: string;
+  /** Extra line of what the figures assume, in the printed report's heading. */
+  reportNote?: string;
   footer?: (capacity: number) => ReactNode;
   /** Planning new schools on the map (projection page), given the current filters. */
   planning?: (filters: Filters) => MapPlanning | undefined;
@@ -143,7 +145,7 @@ interface Props {
 
 /** Filter bar, stat tiles, the shortage map, resource charts, then shortage charts and school table over one Dataset. */
 export default function Overview({
-  data, mode, showLevels = false, controls, scopePrefix, top, shortageTop, afterCharts, notes, panelContext, footer,
+  data, mode, showLevels = false, controls, scopePrefix, top, shortageTop, afterCharts, notes, panelContext, reportNote, footer,
   planning,
 }: Props) {
   const [filters, setFilters] = useState<Filters>({ level: PRE_PRIMARY, district: '', sector: '', school: null });
@@ -322,7 +324,7 @@ export default function Overview({
         <div className="hidden border-b border-line pb-3 print:block">
           <h2 className="text-lg font-semibold text-ink">{level.label} ({level.grades.join(', ')}) · {scope}</h2>
           <p className="text-xs text-ink2">
-            {reportScope} · Capacity {level.capacity} students per room · Source: {meta.source} · Printed {new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' })}
+            {reportScope} · Capacity {level.capacity} students per room{reportNote ? ` · ${reportNote}` : ''} · Source: {meta.source} · Printed {new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' })}
           </p>
         </div>
         <Tiles t={t} notes={notes} level={level} />

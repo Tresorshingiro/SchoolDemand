@@ -41,12 +41,19 @@ export function listAudit(p: { before?: number; userId?: number; action?: string
 
 /* ------------------------------------------------------------------ data sources (backend/app/routers/data_admin.py) */
 
-export type DataKind = 'school_data' | 'catchment' | 'nisr_population';
+export type DataKind = 'school_data' | 'catchment' | 'nisr_population' | 'flow_rates' | 'teachers' | 'walking_network';
 export const KIND_LABEL: Record<DataKind, string> = {
   school_data: 'School data (MINEDUC)',
   catchment: 'Catchment (GIS)',
   nisr_population: 'NISR population (age 3, district)',
+  flow_rates: 'Repetition and dropout (MINEDUC)',
+  teachers: 'Teachers (MINEDUC)',
+  walking_network: 'Walking network (OpenStreetMap)',
 };
+/** Kinds uploaded for one school year (the upload asks for it). */
+export const YEAR_KINDS: DataKind[] = ['school_data', 'teachers'];
+/** Kinds the projection needs: replaced by publishing another file, never withdrawn. */
+export const REQUIRED_KINDS: DataKind[] = ['catchment', 'flow_rates', 'walking_network'];
 
 export interface ImportRun {
   id: number;
@@ -106,6 +113,7 @@ export interface SourceCard {
   label: string;
   live: ImportRun[];
   connector: string | null;
+  missing_file: boolean; // walking network: it is live but its routing file was lost
 }
 
 const DATA = '/admin/data';

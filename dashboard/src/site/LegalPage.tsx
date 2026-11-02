@@ -7,6 +7,7 @@ const PAGES: Record<string, { title: string; paragraphs: string[] }> = {
     paragraphs: [
       'Mapping applications and related geospatial data are provided as-is for planning and operational use. Completeness, accuracy, and currency may vary by source and refresh cycle.',
       'Users should verify critical decisions against authoritative records. Rwanda Space Agency and contributing institutions are not liable for decisions made solely on the basis of these maps.',
+      'Walking distances for planned schools use road and path data © OpenStreetMap contributors, available under the Open Database License (ODbL): openstreetmap.org/copyright. A path missing from that data makes a walk look longer than it is. Slope and walking time are not considered.',
     ],
   },
   privacy: {

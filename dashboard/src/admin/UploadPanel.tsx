@@ -1,11 +1,12 @@
 import { useState, type FormEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { UploadCloud, X } from 'lucide-react';
-import { KIND_LABEL, uploadFile, type DataKind } from './api';
+import { KIND_LABEL, YEAR_KINDS, uploadFile, type DataKind } from './api';
 import { btn as buttons, field } from './ui';
 
-const MAX_MB = 50;
 const btn = buttons.secondary;
+const NETWORK_FILE = { pattern: /\.osm\.pbf$/i, wrong: 'Upload the OpenStreetMap extract, an .osm.pbf file.', hint: '.osm.pbf', accept: '.pbf', mb: 200 };
+const TABLE_FILE = { pattern: /\.(xlsx|csv)$/i, wrong: 'Upload an .xlsx or .csv file.', hint: '.xlsx or .csv', accept: '.xlsx,.csv', mb: 50 };
 
 /** Side panel: choose a file (and the school year for school data), upload it, then open its check. */
 export default function UploadPanel({ kind, suggestedYear, onClose }: {
@@ -18,16 +19,17 @@ export default function UploadPanel({ kind, suggestedYear, onClose }: {
   const [year, setYear] = useState(String(suggestedYear));
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  const rule = kind === 'walking_network' ? NETWORK_FILE : TABLE_FILE;
 
   async function submit(event: FormEvent) {
     event.preventDefault();
     setError('');
     if (!file) return setError('Choose a file.');
-    if (!/\.(xlsx|csv)$/i.test(file.name)) return setError('Upload an .xlsx or .csv file.');
-    if (file.size > MAX_MB * 1024 * 1024) return setError(`The file is larger than ${MAX_MB} MB.`);
+    if (!rule.pattern.test(file.name)) return setError(rule.wrong);
+    if (file.size > rule.mb * 1024 * 1024) return setError(`The file is larger than ${rule.mb} MB.`);
     setBusy(true);
     try {
-      const run = await uploadFile(kind, file, kind === 'school_data' ? Number(year) : undefined);
+      const run = await uploadFile(kind, file, YEAR_KINDS.includes(kind) ? Number(year) : undefined);
       navigate(`/admin/data/imports/${run.id}`);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -51,10 +53,10 @@ export default function UploadPanel({ kind, suggestedYear, onClose }: {
         <label className="flex cursor-pointer flex-col items-center gap-2 rounded-xl border-2 border-dashed border-line bg-page px-4 py-8 text-center transition hover:border-[var(--accent)]">
           <UploadCloud size={28} className="text-accent" aria-hidden />
           <span className="text-[13px] font-medium text-ink">{file ? file.name : 'Choose a file'}</span>
-          <span className="text-[12px] text-muted">.xlsx or .csv, up to {MAX_MB} MB</span>
-          <input type="file" accept=".xlsx,.csv" onChange={(e) => setFile(e.target.files?.[0] ?? null)} className="sr-only" />
+          <span className="text-[12px] text-muted">{rule.hint}, up to {rule.mb} MB</span>
+          <input type="file" accept={rule.accept} onChange={(e) => setFile(e.target.files?.[0] ?? null)} className="sr-only" />
         </label>
-        {kind === 'school_data' && (
+        {YEAR_KINDS.includes(kind) && (
           <label className="text-[13px] font-medium text-ink2">School year of the file
             <input type="number" min={2000} max={2100} value={year} onChange={(e) => setYear(e.target.value)}
               className={`mt-1.5 block w-32 ${field}`} />

@@ -2,8 +2,9 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { ALL_LEVELS, fmt, loadDataset, type Dataset, type Meta, type SchoolLevel } from '../data';
 import {
   catchmentDemand, cohortTable, comboTable, copyScenario, createScenario, defaultIntake, deleteScenario, fetchProjection, getScenario, gradeByDistrict,
+  assumptionsLabel, assumptionsReport, DEFAULT_ASSUMPTIONS,
   levelTotals, listScenarios, loadProjectionBase, projectionMeta, sameIntake, updateScenario, yearDataset, yearTotals,
-  type Intake, type ProjectionBase, type ProjectedYear, type Scenario, type ScenarioSummary,
+  type Assumptions, type Intake, type ProjectionBase, type ProjectedYear, type Scenario, type ScenarioSummary,
 } from '../projection';
 import type { Mode } from '../theme';
 import { isAdmin, useAuth } from '../auth';
@@ -19,6 +20,9 @@ import NewSchoolImpact from './NewSchoolImpact';
 import Overview, { Card } from './Overview';
 import IntakePlanner, { FedEntrants, type SchoolEntrants } from './IntakePlanner';
 import SchoolPlanBar, { type SchoolPlanControls } from './SchoolPlanBar';
+import TeachersSection from './TeachersSection';
+import AssumptionControls from './AssumptionControls';
+import { teacherMap, withTeachers } from '../teachers';
 import { CatchmentDemandChart, CohortChart, CompareBars, YearTrend, type SchoolDemand } from './Charts';
 
 // The plan on screen (with unsaved edits) and the saved scenario it came from, remembered in this browser.
@@ -58,10 +62,27 @@ function savePlan(v: StoredPlan) {
 }
 
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
+const NO_NETWORK = 'No walking network published yet.'; // the API's answer to planned schools without a network
+
+/** "20.4% repeat, 4.9% drop out" from [repetition, dropout] shares. */
+const rateText = (r: [number, number] | undefined) =>
+  (r ? `${(r[0] * 100).toFixed(1)}% repeat, ${(r[1] * 100).toFixed(1)}% drop out` : 'no rates');
+
+/** How students move each year under the switches, for the cohort chart. */
+function flowText(a: Assumptions, base: ProjectionBase): string {
+  const [repeat, drop] = base.rates.districts.Rwanda ?? [0, 0];
+  const rates = (text: string) => `(each district's rates, ${base.rates.schoolYear}; Rwanda ${text})`;
+  const share = (v: number) => (v * 100).toFixed(1);
+  if (a.repetition && a.dropout) return `Each year every grade keeps its repeaters, loses its dropouts and promotes the rest ${rates(rateText(base.rates.districts.Rwanda))}.`;
+  if (a.repetition) return `Dropout is off: each year every grade keeps its repeaters and promotes the rest ${rates(`${share(repeat)}% repeat`)}.`;
+  if (a.dropout) return `Repetition is off: each year every grade loses its dropouts and promotes the rest ${rates(`${share(drop)}% drop out`)}.`;
+  return 'Repetition and dropout are off: each year every student moves up a grade.';
+}
 
 /** Students by grade and year: each cohort moves one step down and to the right. */
-function CohortTable({ years, baseYear, year, rows, entryNote }: {
+function CohortTable({ years, baseYear, year, rows, entryNote, repetition }: {
   years: number[]; baseYear: number; year: number; rows: { grade: string; byYear: number[] }[]; entryNote: string;
+  repetition: boolean;
 }) {
   return (
     <div className="overflow-x-auto px-4 pb-4">
@@ -100,8 +121,8 @@ function CohortTable({ years, baseYear, year, rows, entryNote }: {
         </tbody>
       </table>
       <p className="mt-2 text-xs text-muted">
-        * actual. Underlined: the {baseYear} {rows[0]?.grade} cohort moving up a grade each year. Each year the last grade
-        leaves the level and {entryNote}.
+        * actual. Underlined: the {baseYear} {rows[0]?.grade} cohort moving up a grade each year
+        {repetition ? ' (its promoted students; repeaters stay a year longer)' : ''}. Each year the promoted students of the last grade leave the level and {entryNote}.
       </p>
     </div>
   );
@@ -169,7 +190,7 @@ function CatchmentDemandCard({ base, result, meta, year, codes, info, mode, onPi
   );
   const total = rows.reduce((s, d) => s + d.demand, 0);
   const enrolled = rows.reduce((s, d) => s + d.enrolled, 0);
-  const capacity = base.levels.find((l) => l.grades.includes('N1'))?.capacity ?? 45;
+  const capacity = meta.levels[0].capacity;
   const notes = [
     year !== used ? `${year} has no catchment figures: showing ${used}` : '',
     base.estimated.N1?.includes(used) ? `${used} repeats 2029 in the catchment file` : '',
@@ -199,6 +220,10 @@ export default function ProjectionPage({ current, mode }: { current: Dataset; mo
   const [error, setError] = useState<string | null>(null);
   const [intake, setIntake] = useState<Intake | null>(null);
   const [picked, setYear] = useState<number | null>(null); // null = the base year (the newest actual school year)
+  // What the person is trying: lasts until the page is reloaded, never saved
+  const [assumptions, setAssumptions] = useState<Assumptions>(DEFAULT_ASSUMPTIONS);
+  // The ones the figures on screen were calculated with: labels and the report follow these, not the controls
+  const [applied, setApplied] = useState<Assumptions>(DEFAULT_ASSUMPTIONS);
   const [plannerOpen, setPlannerOpen] = useState(true);
   // Saved scenarios (database) and the one on screen
   const [scenarios, setScenarios] = useState<ScenarioSummary[]>([]);
@@ -217,7 +242,6 @@ export default function ProjectionPage({ current, mode }: { current: Dataset; mo
   // Placing a school on the map, and the one in the form (index into `schools`, null = a new one)
   const [placing, setPlacing] = useState(false);
   const [editing, setEditing] = useState<{ index: number | null; school: PlannedSchoolInput } | null>(null);
-  const [draftKm, setDraftKm] = useState(2);
   const [formError, setFormError] = useState<string | null>(null);
   const [formBusy, setFormBusy] = useState(false);
 
@@ -344,13 +368,14 @@ export default function ProjectionPage({ current, mode }: { current: Dataset; mo
   useEffect(() => {
     if (!pastYears.length) return;
     let cancelled = false;
-    Promise.all(pastYears.map((y) => loadDataset(y).then((d) => [y, d] as const)))
+    const capacity = assumptions.capacity === DEFAULT_ASSUMPTIONS.capacity ? undefined : assumptions.capacity;
+    Promise.all(pastYears.map((y) => loadDataset(y, capacity).then((d) => [y, d] as const)))
       .then((pairs) => !cancelled && setHistory(new Map(pairs)))
       .catch(() => undefined); // the projection still works without the past years
     return () => {
       cancelled = true;
     };
-  }, [pastYears]);
+  }, [pastYears, assumptions.capacity]);
   // The projection runs on the server; the previous result stays on screen while a new plan is calculated. With
   // planned new schools on, the run without them (`before`) is kept too, for the before -> after figures.
   const [result, setResult] = useState<ProjectedYear[] | null>(null);
@@ -358,28 +383,36 @@ export default function ProjectionPage({ current, mode }: { current: Dataset; mo
   const [before, setBefore] = useState<ProjectedYear[] | null>(null);
   const [computing, setComputing] = useState(false);
   const [runError, setRunError] = useState<string | null>(null);
-  const activeSchools = useMemo(() => (schoolsOn ? schools : []), [schoolsOn, schools]);
+  // No walking network published: schools remembered in the browser are not sent, so the page still loads
+  const networkLive = base?.walkingNetwork ?? false;
+  const activeSchools = useMemo(() => (schoolsOn && networkLive ? schools : []), [schoolsOn, networkLive, schools]);
   useEffect(() => {
     if (!base || !intake) return;
     let cancelled = false;
     setComputing(true);
     Promise.all([
-      fetchProjection(base, intake, info, activeSchools),
-      activeSchools.length ? fetchProjection(base, intake, info) : Promise.resolve(null),
+      fetchProjection(base, intake, info, activeSchools, assumptions),
+      activeSchools.length ? fetchProjection(base, intake, info, [], assumptions) : Promise.resolve(null),
     ])
       .then(([r, without]) => {
         if (cancelled) return;
         setResult(r.years);
+        setApplied(assumptions);
         setPlanned(r.planned);
         setBefore(without?.years ?? null);
         setRunError(null);
       })
-      .catch((e: unknown) => !cancelled && setRunError(message(e)))
+      .catch((e: unknown) => {
+        if (cancelled) return;
+        // The network went while this page was open: run again without the planned schools instead of failing the page
+        if (message(e) === NO_NETWORK) setBase((b) => (b ? { ...b, walkingNetwork: false } : b));
+        else setRunError(message(e));
+      })
       .finally(() => !cancelled && setComputing(false));
     return () => {
       cancelled = true;
     };
-  }, [base, intake, info, activeSchools]);
+  }, [base, intake, info, activeSchools, assumptions]);
   // The school lookup with the planned schools of the run
   const infoAll = useMemo(
     () => (planned.length ? new Map([...info, ...planned.map((p) => [p.c, plannedInfo(p)] as const)]) : info),
@@ -391,7 +424,6 @@ export default function ProjectionPage({ current, mode }: { current: Dataset; mo
     if (!s) return;
     setPlacing(false);
     setFormError(null);
-    setDraftKm(s.walking_km);
     setEditing({ index: i, school: s });
   };
   // The school of the form is checked by a run with it (the API refuses a point outside Rwanda's sectors ...) before
@@ -420,12 +452,18 @@ export default function ProjectionPage({ current, mode }: { current: Dataset; mo
     return {
       planned,
       dimmed: !schoolsOn,
+      available: base.walkingNetwork,
+      reachable: [...new Set(planned.flatMap((p) => Object.values(p.ring).flat()))]
+        .flatMap((c) => {
+          const s = infoAll.get(c);
+          return s?.y != null && s.x != null ? [{ latitude: s.y, longitude: s.x }] : [];
+        }),
       placing,
-      draft: editing ? { latitude: editing.school.latitude, longitude: editing.school.longitude, km: draftKm } : null,
+      draft: editing ? { latitude: editing.school.latitude, longitude: editing.school.longitude } : null,
       form: editing ? (
         <NewSchoolForm key={`${editing.index}-${editing.school.latitude}-${editing.school.longitude}`} base={base}
           meta={current.meta} initial={editing.school} editing={editing.index !== null} error={formError} busy={formBusy}
-          onKm={setDraftKm} onSubmit={(s) => void submitSchool(s)} onCancel={() => setEditing(null)} />
+          onSubmit={(s) => void submitSchool(s)} onCancel={() => setEditing(null)} />
       ) : null,
       onPlacing: (on) => {
         setPlacing(on);
@@ -435,7 +473,6 @@ export default function ProjectionPage({ current, mode }: { current: Dataset; mo
         const km = DEFAULT_KM[key] ?? 2;
         setPlacing(false);
         setFormError(null);
-        setDraftKm(km);
         setEditing({
           index: null,
           school: {
@@ -521,7 +558,10 @@ export default function ProjectionPage({ current, mode }: { current: Dataset; mo
       refreshSchoolPlans();
     }),
   } : null;
-  const meta = useMemo(() => (base ? projectionMeta(base, current.meta) : current.meta), [base, current]);
+  const meta = useMemo(
+    () => (base ? projectionMeta(base, current.meta, applied.capacity) : current.meta),
+    [base, current, applied.capacity],
+  );
   // Students per district and year for every entry grade
   const entryByDistrict = useMemo(() => {
     if (!base || !result) return {};
@@ -533,6 +573,16 @@ export default function ProjectionPage({ current, mode }: { current: Dataset; mo
     return sameIntake(intake, base.population) ? base.defaultLabel : 'Unsaved plan';
   }, [base, intake, active]);
   const pickYear = useCallback((y: string) => setYear(Number(y)), []);
+  // Every year's school x level rows with their teachers: actual years their own, projected years the base year's
+  // (the projection's rows take their name and place from one row of the school, not its teachers per level)
+  const baseTeachers = useMemo(() => teacherMap(current.schools), [current]);
+  const teacherYears = useMemo(() => [
+    ...pastYears.flatMap((y) => {
+      const d = history.get(y);
+      return d ? [{ year: y, rows: d.schools }] : [];
+    }),
+    ...(result ?? []).map((r) => ({ year: r.year, rows: withTeachers(r.schools, baseTeachers) })),
+  ], [pastYears, history, result, baseTeachers]);
 
   if (error) return <div className="p-8 text-sm text-ink2">Could not load the projection: {error}</div>;
   if (!result && runError) return <div className="p-8 text-sm text-ink2">Could not calculate the projection: {runError}</div>;
@@ -544,13 +594,15 @@ export default function ProjectionPage({ current, mode }: { current: Dataset; mo
   const past = year < base.baseYear ? history.get(year) : undefined;
   const py = result.find((r) => r.year === year) ?? result[result.length - 1];
   const isActual = year <= base.baseYear;
-  const shown = past ?? yearDataset(py, meta);
+  const shown = past ?? yearDataset({ ...py, schools: teacherYears.find((t) => t.year === py.year)?.rows ?? py.schools }, meta);
   const pastTotals = (level: number, codes: Set<number>) =>
     pastYears.flatMap((y) => {
       const d = history.get(y);
       return d ? [{ year: y, ...levelTotals(d.schools, level, codes) }] : [];
     });
   const years = base.years.slice(1);
+  const triedLabel = assumptionsLabel(applied);
+  const tried = triedLabel ? ` · ${triedLabel}` : '';
   // Where the new students of an entry grade come from: a district pool (P6 -> S1) or the same school (N3 -> P1)
   const feedOf = (grade: string) => {
     const f = base.feeds.find(([, targets]) => targets.includes(grade));
@@ -561,7 +613,7 @@ export default function ProjectionPage({ current, mode }: { current: Dataset; mo
   const entryNote = (grade: string) => {
     if (base.intakes[grade] !== undefined) return `the new ${grade} from the intake plan arrives`;
     const feed = feedOf(grade);
-    return feed ? `the new ${grade} arrives from the ${feed.source} of the year before` : `no new ${grade} arrives`;
+    return feed ? `the new ${grade} arrives from the promoted ${feed.source} of the year before` : `no new ${grade} arrives`;
   };
 
   return (
@@ -570,8 +622,9 @@ export default function ProjectionPage({ current, mode }: { current: Dataset; mo
       data={shown}
       mode={mode}
       showLevels
-      scopePrefix={`${year}${isActual ? ' actual' : ' projected'} · Intake: ${presetLabel}`}
-      panelContext={`${isActual ? 'Actual' : 'Projected'} ${year} · Intake: ${presetLabel}`}
+      scopePrefix={`${year}${isActual ? ' actual' : ' projected'} · Intake: ${presetLabel}${tried}`}
+      panelContext={`${isActual ? 'Actual' : 'Projected'} ${year} · Intake: ${presetLabel}${tried}`}
+      reportNote={assumptionsReport(applied)}
       notes={{
         available: isActual ? `${year} rooms` : `${base.baseYear} rooms, no new construction`,
         gradeChart: "Each grade's rooms = the school's rooms for the level shared out between its grades that year.",
@@ -584,7 +637,8 @@ export default function ProjectionPage({ current, mode }: { current: Dataset; mo
             </span>
           )}
           {runError && !computing && <span className="text-xs text-[var(--deficit)]" role="alert">{runError}</span>}
-          <span className="hidden text-xs text-muted sm:inline">Intake: {presetLabel}</span>
+          <span className="hidden text-xs text-muted sm:inline">Intake: {presetLabel}{tried}</span>
+          <AssumptionControls value={assumptions} onChange={setAssumptions} />
           <label className="flex items-center gap-2 text-sm text-ink2">
             Year
             <select aria-label="Year" value={year} className="h-8 px-2 text-sm font-medium text-ink"
@@ -598,13 +652,20 @@ export default function ProjectionPage({ current, mode }: { current: Dataset; mo
       }
       planning={planning}
       afterCharts={(codes, filters, pickSchool) => {
-        if (filters.level === ALL_LEVELS) return null;
         const level = base.levels.find((l) => l.level === filters.level) ?? base.levels[0];
         // Pre-primary (the level whose entry grade comes from the catchment population): demand per school
-        return base.intakes[level.grades[0]] !== undefined ? (
-          <CatchmentDemandCard base={base} result={result} meta={meta} year={year} codes={codes} info={infoAll}
-            mode={mode} onPick={pickSchool} />
-        ) : null;
+        const demand = filters.level !== ALL_LEVELS && base.intakes[level.grades[0]] !== undefined;
+        return (
+          <>
+            {demand && (
+              <CatchmentDemandCard base={base} result={result} meta={meta} year={year} codes={codes} info={infoAll}
+                mode={mode} onPick={pickSchool} />
+            )}
+            <TeachersSection byYear={teacherYears} year={year} baseYear={base.baseYear}
+              actualYears={[...pastYears, base.baseYear]} level={filters.level} district={filters.district}
+              codes={codes} mode={mode} onPickSchool={pickSchool} onPickYear={pickYear} />
+          </>
+        );
       }}
       top={(codes, filters) => {
         // All levels: the intake plan (the level whose new students come from the catchment population) and every grade
@@ -654,7 +715,7 @@ export default function ProjectionPage({ current, mode }: { current: Dataset; mo
             ) : null}
             {age === undefined && feed ? (
               <Card title={school ? `New ${entry} students · ${school.name}` : `New ${entry} students per district`}
-                sub={`From the ${feed.source} of the year before${feed.sameSchool ? ' in the same school' : ''}${feed.targets.length > 1 ? `, split between ${feed.targets.join(' / ')} by each district's ${base.baseYear} mix` : ''} · nationally: ${perYear}`}
+                sub={`From the promoted ${feed.source} of the year before${feed.sameSchool ? ' in the same school' : ''}${feed.targets.length > 1 ? `, split between ${feed.targets.join(' / ')} by each district's ${base.baseYear} mix` : ''} · nationally: ${perYear}`}
                 aside={<button type="button" onClick={() => setPlannerOpen((o) => !o)} aria-expanded={plannerOpen} className="rounded-md border border-line px-2.5 py-1 text-xs text-ink2 hover:text-ink print:hidden">{plannerOpen ? 'Hide table' : 'Show table'}</button>}>
                 {plannerOpen && (
                   <FedEntrants base={base} grade={entry} source={feed.source} targets={feed.targets} sameSchool={feed.sameSchool}
@@ -664,13 +725,14 @@ export default function ProjectionPage({ current, mode }: { current: Dataset; mo
               </Card>
             ) : null}
             <Card title="Students by grade and year"
-              sub="Cohorts move up one grade a year. The selected year is highlighted; click a column to show that year.">
+              sub={`${flowText(applied, base)} The selected year is highlighted; click a column to show that year.`}>
               <div className="print-cols-5 grid items-start gap-4 px-2 lg:grid-cols-5">
                 <div className="print-span-3 pb-3 lg:col-span-3">
                   <CohortChart rows={cohort} years={base.years} baseYear={base.baseYear} year={year} mode={mode} onPick={pickYear} />
                 </div>
                 <div className="print-span-2 lg:col-span-2">
                   <CohortTable years={base.years} baseYear={base.baseYear} year={year} rows={cohort}
+                    repetition={applied.repetition}
                     entryNote={all ? 'new students enter the first grade of each level' : entryNote(entry)} />
                 </div>
               </div>

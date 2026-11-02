@@ -1,6 +1,7 @@
 import { Fragment, useEffect, useMemo } from 'react';
 import { fmt, fmtGap, statusOf, type Dataset } from '../data';
 import { STATUS_COLORS, type Mode } from '../theme';
+import { fmtRatio, hasTeachers, pupilsPerTeacher } from '../teachers';
 
 interface Props {
   code: number;
@@ -92,6 +93,15 @@ export default function SchoolPanel({ code, data, mode, onClose, context }: Prop
               ))}
             </tbody>
           </table>
+          <p className="mt-2 text-xs text-ink2" aria-label="Teachers">
+            {levels.some(hasTeachers)
+              ? levels.filter(hasTeachers).map((r) =>
+                `${data.meta.levels[r.l].label}: ${fmt(r.t!)} teachers, ${fmtRatio(pupilsPerTeacher(r))} pupils per teacher`).join(' · ')
+              : 'No teacher data (the school is not in the MINEDUC teachers file, or records no teachers).'}
+            {levels.some(hasTeachers) && levels.some((r) => !hasTeachers(r)) &&
+              ` · no teachers recorded for ${levels.filter((r) => !hasTeachers(r)).map((r) => data.meta.levels[r.l].label).join(', ')}`}
+            {context?.startsWith('Projected') && levels.some(hasTeachers) && " (the base year's teachers)"}
+          </p>
         </section>
 
         <section>

@@ -14,6 +14,8 @@ export interface SchoolLevel {
   r: number; // required classrooms
   gap: number; // available - required
   net?: number; // "All levels" rows only: available - required (gap is the sum of the levels' shortages there)
+  t?: number | null; // teachers of the level (null / missing = no teacher data: not in the teachers file, planned schools)
+  tst?: number; // "All levels" rows only: students of the levels with teacher data (pupils per teacher = tst / t)
   y: number | null; // latitude (null when missing / outside Rwanda)
   x: number | null; // longitude
 }
@@ -45,10 +47,11 @@ export interface Meta {
   baseYear: number; // the newest: the projection starts from it
   projectionYears: number[]; // the four years after it
   sources: DataSource[]; // the live data files
+  teachers: { year: number | null; schools: number }; // school year of the teachers (null = none), schools with data
 }
 
 export interface DataSource {
-  kind: 'school_data' | 'catchment' | 'nisr_population';
+  kind: 'school_data' | 'catchment' | 'nisr_population' | 'flow_rates' | 'teachers';
   year: number | null;
   file: string | null;
   publishedAt: string | null;
@@ -65,19 +68,23 @@ export interface Dataset {
   meta: Meta;
 }
 
-/** A school year's dataset from the API (default: the newest year; backend/app/domain/dashboard.py current). */
-export async function loadDataset(year?: number): Promise<Dataset> {
+/**
+ * A school year's dataset from the API (default: the newest year; backend/app/domain/dashboard.py current). With
+ * `capacity`: its rooms required and gaps at that many students per classroom.
+ */
+export async function loadDataset(year?: number, capacity?: number): Promise<Dataset> {
   const q = year ? `?year=${year}` : '';
+  const qc = capacity ? `${q ? `${q}&` : '?'}capacity=${capacity}` : q;
   const [schools, grades, meta, combos] = await Promise.all([
-    getJson<SchoolLevel[]>(`/school-levels${q}`),
-    getJson<GradeRow[]>(`/grades${q}`),
+    getJson<SchoolLevel[]>(`/school-levels${qc}`),
+    getJson<GradeRow[]>(`/grades${qc}`),
     getJson<Meta>(`/meta${q}`),
     getJson<{ names: string[]; rows: [number, number, number, number, number][] }>(`/combos${q}`),
   ]);
   return {
     schools,
     grades,
-    meta,
+    meta: capacity ? { ...meta, levels: meta.levels.map((l) => ({ ...l, capacity })) } : meta,
     combos: combos.rows.map(([c, gi, ni, st, g]): ComboRow => [c, gi, combos.names[ni], st, g]),
   };
 }
@@ -112,9 +119,14 @@ export function bySchool(rows: SchoolLevel[]): SchoolLevel[] {
   const out = new Map<number, SchoolLevel & { short: number }>();
   for (const r of rows) {
     const s = out.get(r.c);
+    const known = r.t != null && r.t > 0; // the level's teachers count (teachers.ts)
     if (!s) {
-      out.set(r.c, { ...r, l: ALL_LEVELS, net: r.gap, short: Math.min(r.gap, 0) });
+      out.set(r.c, { ...r, l: ALL_LEVELS, net: r.gap, short: Math.min(r.gap, 0), t: known ? r.t : null, tst: known ? r.st : 0 });
       continue;
+    }
+    if (known) {
+      s.t = (s.t ?? 0) + r.t!;
+      s.tst! += r.st;
     }
     s.st += r.st;
     s.g += r.g;

@@ -58,8 +58,23 @@ export default function NewSchoolImpact({ planned, before, after, level, year, m
             ? `Opens in ${p.opening} — nothing changes before.`
             : taken
               ? `${fmt(taken)} students in ${year}: the extra students of the crowded schools nearby, and its own cohorts moving up.`
-              : `No ${lv.label.toLowerCase()} school within ${p.km} km is short of rooms in ${year}, so nothing changes.`}
+              : `No ${lv.label.toLowerCase()} school within ${p.km} km on foot is short of rooms in ${year}, so nothing changes.`}
         </div>
+        {p.snap_km > p.km && (
+          <div className="text-xs text-[var(--deficit)]">
+            This point is {p.snap_km.toFixed(1)} km from the nearest mapped path, so no school can be reached on foot. Move it closer to a road or path.
+          </div>
+        )}
+        {!p.on_main_network && (
+          <div className="text-xs text-[var(--deficit)]">
+            This point is on a path not connected to the main network. Nearby schools may be reachable in reality; move it onto a connected road or path.
+          </div>
+        )}
+        {(p.unreachable[String(level)] ?? 0) > 0 && (
+          <div className="text-xs text-muted">
+            {p.unreachable[String(level)]} {p.unreachable[String(level)] === 1 ? 'school nearby has' : 'schools nearby have'} no walking route on the map and {p.unreachable[String(level)] === 1 ? 'is' : 'are'} not counted.
+          </div>
+        )}
       </div>
     );
   });

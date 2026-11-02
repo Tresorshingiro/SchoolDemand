@@ -18,21 +18,19 @@ with a MINEDUC GIS portal account (the API checks it with the portal).
 
 | Address | Page | |
 |---|---|---|
-| `/` | Landing page (`src/site/LandingPage.tsx`) | public |
-| `/login` | Sign-in (`src/site/LoginPage.tsx`) | public; goes back to the page asked for (`?next=`) or `/dashboard` |
+| `/`, `/dashboard` | The dashboard (`src/App.tsx`) | signed-in users only, loaded after sign-in |
+| `/admin/*` | The admin portal (`src/admin/`) | administrators only |
 | `/legal/{privacy,terms,disclaimer,accessibility}` | `src/site/LegalPage.tsx` | public |
-| `/dashboard` | The dashboard (`src/App.tsx`) | signed-in users only, loaded after sign-in |
 
-The landing, sign-in and legal pages keep the layout of the School Demand & Demographics site designed by the team
-(`src/site/site.css`, scoped under `.site`) in the dashboard's theme: same colour tokens as `src/index.css`, same
-system font, same light / dark mode, and the same theme switch (`ThemeProvider` / `ThemeToggle` in `src/theme.tsx`,
-shared by every page). The landing
-page's maps and chart are illustrations (`src/site/Illustrations.tsx`): Rwanda's real district
-outlines (`src/site/rwandaMap.ts`, built by `python scripts/build_landing_map.py`) with decorative shading and no
-figures, since the data is only for signed-in users. Routing:
-`react-router-dom` in `src/main.tsx`. Sign-in state: `src/auth.tsx` — the API sets an HttpOnly session cookie, the page
-asks `/api/auth/me`; when the session ends (401) the dashboard returns to the sign-in page. **Sign out** is in the
-dashboard header.
+There is no landing or sign-in page: a visitor without a session is sent to the MINEDUC GIS portal's sign-in
+(`src/portalSignIn.ts`, OAuth implicit grant for the app item `zCxgnSvJJTL8iCD1`) and comes back to the site's base
+with a portal token; `src/auth.tsx` removes it from the address and sends it to `POST /api/auth/portal-token`, which
+sets the HttpOnly session cookie (the page then asks `/api/auth/me`). When the portal comes back without a token, or
+the API refuses it, the page says why instead of going round again. **Sign out** (dashboard header, admin portal) ends
+the session and the portal's (`oauth2/signout`), then the portal returns to the site. The return address is the
+site's base on the current host, so every host the dashboard is served from must be a redirect URL of the app item.
+The legal pages keep the layout of the School Demand & Demographics site (`src/site/site.css`, scoped under `.site`)
+in the dashboard's theme. Routing: `react-router-dom` in `src/main.tsx`.
 
 ## Deploy
 
@@ -91,10 +89,14 @@ New students:
   - **Demand per school from its catchment area** (Pre-Primary): the children aged 3 in each school's catchment in the
     selected year (2027 when 2026 is selected) against its N1 students in 2026, the 50 largest catchments in scope; the tooltip adds the rooms those children need and the rooms N1 has that year. Per-school figures
     come with `GET /api/projection/config` (`catchment`).
-  - **P1** = the N3 of the year before: each school's N3 moves to its own P1; stand-alone nurseries' N3 is shared to the
-    primary schools of their sector. Children who did not attend pre-primary are not added.
-  - **S1** = all P6 pupils of the district the year before.
-  - **S4 / L3 / Y1** = all S3 students of the district the year before, split by the district's 2026 mix.
+  - **P1** = the promoted N3 of the year before: each school's promoted N3 move to its own P1; stand-alone nurseries'
+    are shared to the primary schools of their sector. Children who did not attend pre-primary are not added.
+  - **S1** = the promoted P6 pupils of the district the year before.
+  - **S4 / L3 / Y1** = the promoted S3 students of the district the year before, split by the district's 2026 mix.
+  - **Repetition and dropout** (on by default; see "Trying other assumptions"), every level and year: each grade keeps its repeaters, loses its dropouts and promotes
+    the rest, at its district's rates of the latest school year in the MINEDUC file (`Repetition and dropout
+    rates.xlsx`, Average; Rwanda for a school without a district). Class streams follow the students; a cohort keeps
+    its stream size as it moves up.
   - TVET L1–L2 short courses are not projected.
 
   The projection is calculated on the server (`POST /api/projection/run`, ≈2 s for a new plan, then cached); the page
@@ -103,6 +105,33 @@ New students:
   plan records who created it). The browser remembers the plan on screen (and unsaved edits) between visits.
 
   Excel copy of a plan: `python scripts/build_projection_workbook.py --intake intake_plan.csv`.
+
+## Planned new schools and walking distance
+
+A planned school takes extra students only from crowded schools within walking distance along OpenStreetMap roads and
+paths (2 km for Pre-Primary and Primary, 3 km for other levels, editable), counting the short way to the nearest path at
+each end. The map draws the area reachable on foot after calculation, and schools with no route are counted apart. Slope
+and walking time are not considered. Without a published walking network (admin portal → Data) planned schools are
+unavailable and the rest of the dashboard works.
+
+## Trying other assumptions
+
+The filter bar has **Students per classroom** (one number for every level, 20-100, default 46) and **Repetition** and
+**Dropout** switches (default on). Anyone signed in can use them; they change only that person's screen, are never
+saved and return to the defaults on reload (**Reset** does so at once). The number changes rooms required and gaps in
+every year, the switches the projected years only; with a rate off, the students it affected are promoted. Full-day
+levels still need a room per class stream, so a higher number may barely reduce their shortage. A saved plan's summary
+always uses the defaults. The scope text shows what differs from the defaults and the PDF report states the values.
+
+## Teachers
+
+The **Teachers** section (under the shortage charts, same filters) shows teachers and pupils per teacher from the
+MINEDUC teachers file (`t` on each school × level row; `src/teachers.ts`): cards, pupils per teacher by district (by
+sector when a district is picked), by year, and the 50 schools with the most pupils per teacher (click for the
+school's details). Projected years divide the projected students by the base year's teachers (no recruitment
+assumed). Schools not in the file (mostly private) or with no teachers recorded for a level have no teacher data: they
+are left out of pupils per teacher and counted apart, never shown as 0 teachers. The school table and the school
+details show teachers and pupils per teacher too. Teachers needed / short will come once MINEDUC gives its norm.
 
 ## PDF report
 

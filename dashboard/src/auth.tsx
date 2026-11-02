@@ -1,18 +1,16 @@
 /**
- * Who is signed in. People sign in with their MINEDUC GIS portal account (the API checks it with the portal); the
- * session itself is an HttpOnly cookie set by the API (POST /api/auth/login), so the page never sees a token: it asks
- * /api/auth/me on load and after sign-in / sign-out.
+ * Who is signed in. People sign in with their MINEDUC GIS portal account through the portal's own sign-in
+ * (portalSignIn.ts); the session itself is an HttpOnly cookie set by the API (POST /api/auth/portal-token), so the page
+ * never keeps a token: it asks /api/auth/me on load.
  *
- * On the portal's own site a page that needs a session goes through the portal's sign-in instead of the form
- * (portalSignIn.ts): someone already signed in to the portal comes straight back, signed in here too. Signing out turns
- * that off for the tab until the user asks for it on the sign-in page.
+ * On load: a session already open -> signed in. Otherwise, back from the portal with a token -> open the session with
+ * it. Otherwise -> go to the portal's sign-in (once per tab: when the portal comes back without a token, the page says
+ * so instead of looping). Signing out ends the session here and on the portal.
  */
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
-import { Navigate, useLocation } from 'react-router-dom';
+import { Navigate } from 'react-router-dom';
 import { AUTH_EXPIRED, ApiError, getJson, sendJson } from './api';
-import {
-  finishPortalSignIn, portalSignInOn, returningFromPortal, setPortalSignInOff, sitePath, startPortalSignIn,
-} from './portalSignIn';
+import { authorizeUrl, signOutUrl, takeReturn } from './portalSignIn';
 
 export interface User {
   id: number;
@@ -24,81 +22,98 @@ export interface User {
 
 interface AuthState {
   user: User | null;
-  checking: boolean; // the first /auth/me has not answered yet (or the portal sign-in is being finished)
-  signIn: (username: string, password: string, remember: boolean) => Promise<User>;
-  /** Go through the portal's sign-in (portal site only), then to `next`. */
-  signInWithPortal: (next: string) => void;
+  checking: boolean; // the first /auth/me (or the portal token) has not answered yet
+  problem: string | null; // why the user is not signed in, when it is not just "on the way to the portal"
   signOut: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthState | null>(null);
 
-let finished: Promise<void> | null = null; // StrictMode runs effects twice: one session
+// Read once, before the router or StrictMode can run anything twice: the address is cleaned straight away
+const returned = takeReturn();
+const REDIRECTED_KEY = 'school:portal-redirect'; // sessionStorage: this tab has been sent to the portal
 
-/** Back from the portal's sign-in: open our session with its token, then show the page that was asked for. */
-function finishFromPortal(): Promise<void> {
-  finished ??= openPortalSession();
-  return finished;
-}
-
-async function openPortalSession(): Promise<void> {
-  const { token, next } = await finishPortalSignIn();
-  let ok = false;
-  if (token) {
-    try {
-      await sendJson<User>('POST', '/auth/portal-token', { token });
-      ok = true;
-    } catch {
-      setPortalSignInOff(true); // refused here (account disabled …): the form says why when it is used
-    }
+const redirected = () => {
+  try {
+    return sessionStorage.getItem(REDIRECTED_KEY) === '1';
+  } catch {
+    return false;
   }
-  // A fresh load of the page asked for, without the code in the address (the session cookie is set), or the form
-  window.location.replace(sitePath(ok ? next : `/login?next=${encodeURIComponent(next)}`));
-}
+};
+const setRedirected = (on: boolean) => {
+  try {
+    if (on) sessionStorage.setItem(REDIRECTED_KEY, '1');
+    else sessionStorage.removeItem(REDIRECTED_KEY);
+  } catch {
+    /* storage unavailable */
+  }
+};
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [checking, setChecking] = useState(true);
+  const [problem, setProblem] = useState<string | null>(null);
 
   useEffect(() => {
-    if (returningFromPortal()) {
-      void finishFromPortal(); // the page reloads when done; "checking" until then
-      return;
-    }
-    getJson<User>('/auth/me')
-      .then(setUser)
-      .catch(() => setUser(null)) // 401: not signed in (or the API is unreachable — the sign-in page will say so)
-      .finally(() => setChecking(false));
-    const expired = () => setUser(null);
+    const { token, error } = returned;
+    const toPortal = () => {
+      setRedirected(true);
+      window.location.assign(authorizeUrl());
+    };
+    // true while the browser is leaving for the portal ("checking" stays on)
+    const run = async (): Promise<boolean> => {
+      try {
+        setUser(await getJson<User>('/auth/me'));
+        setRedirected(false);
+        return false;
+      } catch {
+        /* not signed in */
+      }
+      if (error) {
+        setProblem(`The portal did not sign you in: ${error}`);
+        return false;
+      }
+      if (token) {
+        try {
+          setUser(await sendJson<User>('POST', '/auth/portal-token', { token, remember: false }));
+          setRedirected(false);
+        } catch (e) {
+          setProblem(e instanceof ApiError ? e.message : 'The sign-in could not be completed.');
+        }
+        return false;
+      }
+      if (redirected()) {
+        setProblem('The portal did not send a token back. Open the dashboard again to try once more.');
+        setRedirected(false);
+        return false;
+      }
+      toPortal();
+      return true;
+    };
+    void run().then((leaving) => {
+      if (!leaving) setChecking(false);
+    });
+    const expired = () => {
+      setUser(null);
+      setProblem('Your session has ended. Reload the page to sign in again.');
+    };
     window.addEventListener(AUTH_EXPIRED, expired);
     return () => window.removeEventListener(AUTH_EXPIRED, expired);
   }, []);
 
-  const signIn = useCallback(async (username: string, password: string, remember: boolean) => {
-    const u = await sendJson<User>('POST', '/auth/login', { username, password, remember });
-    setPortalSignInOff(false);
-    setUser(u);
-    return u;
-  }, []);
-
-  const signInWithPortal = useCallback((next: string) => {
-    setPortalSignInOff(false);
-    void startPortalSignIn(next);
-  }, []);
-
   const signOut = useCallback(async () => {
-    setPortalSignInOff(true); // otherwise the next page would sign in again through the portal straight away
     try {
       await sendJson<void>('POST', '/auth/logout');
     } catch (e) {
       if (!(e instanceof ApiError)) throw e;
     } finally {
       setUser(null);
+      setRedirected(false);
+      window.location.assign(signOutUrl()); // the portal's session too, then back to the site
     }
   }, []);
 
-  const value = useMemo(() => ({ user, checking, signIn, signInWithPortal, signOut }),
-    [user, checking, signIn, signInWithPortal, signOut]);
+  const value = useMemo(() => ({ user, checking, problem, signOut }), [user, checking, problem, signOut]);
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
 
@@ -114,26 +129,19 @@ export const displayName = (u: User) => u.full_name || u.username;
 /** Admins manage accounts, data and saved plans; viewers read and try plans. */
 export const isAdmin = (u: User | null) => u?.role === 'admin';
 
-/**
- * Only for signed-in users; others sign in (through the portal on its site, else the sign-in page) and come back here
- * afterwards.
- */
+/** Only for signed-in users; others are on their way to the portal's sign-in (or told why they are not signed in). */
 export function RequireAuth({ children }: { children: ReactNode }) {
-  const { user, checking } = useAuth();
-  const location = useLocation();
-  const viaPortal = !checking && !user && portalSignInOn();
-  useEffect(() => {
-    if (viaPortal) void startPortalSignIn(location.pathname + location.search);
-  }, [viaPortal, location.pathname, location.search]);
+  const { user, checking, problem } = useAuth();
   if (checking) return <div className="grid min-h-screen place-items-center text-sm text-muted">Checking sign-in…</div>;
-  if (viaPortal) {
-    return <div className="grid min-h-screen place-items-center text-sm text-muted">Signing in with the GIS portal…</div>;
-  }
-  if (!user) {
-    const next = encodeURIComponent(location.pathname + location.search);
-    return <Navigate to={`/login?next=${next}`} replace />;
-  }
-  return <>{children}</>;
+  if (user) return <>{children}</>;
+  return (
+    <div className="grid min-h-screen place-items-center p-8 text-center text-sm text-ink2">
+      <div className="max-w-sm">
+        <p className="text-base font-medium text-ink">School Demand &amp; Demographics</p>
+        <p className="mt-2">{problem ?? 'Taking you to the portal to sign in…'}</p>
+      </div>
+    </div>
+  );
 }
 
 /** Only for administrators (inside RequireAuth); viewers go to the dashboard. */
@@ -141,9 +149,4 @@ export function RequireAdmin({ children }: { children: ReactNode }) {
   const { user } = useAuth();
   if (!isAdmin(user)) return <Navigate to="/dashboard" replace />;
   return <>{children}</>;
-}
-
-/** Where to go after sign-in: the page the user asked for (same site only), else the dashboard. */
-export function safeNext(next: string | null): string {
-  return next && next.startsWith('/') && !next.startsWith('//') && !next.startsWith('/login') ? next : '/dashboard';
 }

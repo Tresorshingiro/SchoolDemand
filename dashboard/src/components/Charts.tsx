@@ -672,3 +672,97 @@ export function StatusSplit({ t, mode }: { t: Totals; mode: Mode }) {
     </div>
   );
 }
+
+/* ------------------------------------------------------------------ teachers (teachers.ts) */
+
+/** One bar of a pupils-per-teacher chart: an area or a school. */
+export interface TeacherItem {
+  name: string;
+  ratio: number;
+  teachers: number;
+  students: number;
+}
+
+const oneDecimal = (v: number) => v.toFixed(1);
+
+/** Pupils per teacher per area or school, highest on top. */
+export function PupilsPerTeacherBars({ data, mode, label, onPick, pickText = 'Click to filter' }: {
+  data: TeacherItem[];
+  mode: Mode;
+  label: string;
+  onPick?: (name: string) => void;
+  pickText?: string;
+}) {
+  const option = useMemo(() => {
+    const c = COLORS[mode];
+    const sorted = [...data].sort((a, b) => a.ratio - b.ratio); // highest ends up on top
+    return {
+      animationDuration: 300,
+      grid: { left: 8, right: 40, top: 8, bottom: 8, containLabel: true },
+      tooltip: {
+        ...tooltipBase(mode),
+        formatter: (ps: { dataIndex: number }[]) => {
+          const d = sorted[ps[0].dataIndex];
+          return `<div style="font-weight:600;margin-bottom:4px">${d.name}</div>` +
+            row(c.available, 'Pupils per teacher', oneDecimal(d.ratio)) +
+            `<div style="color:${c.ink2};margin-top:4px">${fmt(d.students)} students · ${fmt(d.teachers)} teachers</div>` +
+            (onPick ? `<div style="color:${c.muted};margin-top:2px">${pickText}</div>` : '');
+        },
+      },
+      xAxis: { type: 'value', ...axisStyle(mode), axisLine: { show: false } },
+      yAxis: {
+        type: 'category', data: sorted.map((d) => d.name), ...axisStyle(mode),
+        axisLabel: { ...axisStyle(mode).axisLabel, color: c.ink2, width: 180, overflow: 'truncate' },
+      },
+      series: [{
+        type: 'bar', name: 'Pupils per teacher', data: sorted.map((d) => Math.round(d.ratio * 10) / 10),
+        barMaxWidth: 14, barCategoryGap: '30%', cursor: onPick ? 'pointer' : 'default',
+        itemStyle: { color: c.available, borderRadius: [0, 4, 4, 0] },
+        label: { show: true, position: 'right', color: c.ink2, fontSize: 11, fontFamily: FONT,
+          formatter: (p: { value: number }) => oneDecimal(p.value) },
+      }],
+    };
+  }, [data, mode, onPick, pickText]);
+  return <EChart option={option} height={Math.max(220, data.length * 22 + 24)} onClick={onPick} label={label} />;
+}
+
+/** Pupils per teacher by year: the actual years, then the projected students with the base year's teachers. */
+export function PupilsPerTeacherTrend({ data, mode, year, actual, onPick }: {
+  data: { year: number; ratio: number | null; teachers: number; students: number }[];
+  mode: Mode;
+  year: number;
+  actual: number[];
+  onPick?: (year: string) => void;
+}) {
+  const option = useMemo(() => {
+    const c = COLORS[mode];
+    return {
+      animationDuration: 300,
+      grid: { left: 8, right: 8, top: 16, bottom: 8, containLabel: true },
+      tooltip: {
+        ...tooltipBase(mode),
+        formatter: (ps: { dataIndex: number }[]) => {
+          const d = data[ps[0].dataIndex];
+          const kind = actual.includes(d.year) ? 'actual' : 'projected, teachers held';
+          return `<div style="font-weight:600;margin-bottom:4px">${d.year} (${kind})</div>` +
+            row(c.available, 'Pupils per teacher', d.ratio == null ? '—' : oneDecimal(d.ratio)) +
+            `<div style="color:${c.ink2};margin-top:4px">${fmt(d.students)} students · ${fmt(d.teachers)} teachers</div>` +
+            (onPick ? `<div style="color:${c.muted};margin-top:2px">Click to show this year</div>` : '');
+        },
+      },
+      xAxis: { type: 'category', data: data.map((d) => String(d.year)), ...axisStyle(mode) },
+      yAxis: { type: 'value', ...axisStyle(mode), axisLine: { show: false } },
+      series: [{
+        type: 'bar', name: 'Pupils per teacher', barMaxWidth: 36, cursor: onPick ? 'pointer' : 'default',
+        data: data.map((d) => ({
+          value: d.ratio == null ? null : Math.round(d.ratio * 10) / 10,
+          itemStyle: { color: c.available, opacity: d.year === year ? 1 : 0.45, borderRadius: [4, 4, 0, 0],
+            ...(actual.includes(d.year) ? {} : { decal: { symbol: 'rect', dashArrayX: [1, 0], dashArrayY: [2, 3], rotation: -Math.PI / 4, color: 'rgba(255,255,255,0.35)' } }) },
+        })),
+        label: { show: true, position: 'top', color: c.ink2, fontSize: 11, fontFamily: FONT,
+          formatter: (p: { value: number | null }) => (p.value == null ? '' : oneDecimal(p.value)) },
+      }],
+    };
+  }, [data, mode, year, actual, onPick]);
+  return <EChart option={option} height={260} onClick={onPick} label="Pupils per teacher by year" />;
+}

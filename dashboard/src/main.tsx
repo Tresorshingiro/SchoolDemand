@@ -5,15 +5,13 @@ import './index.css';
 import './site/site.css';
 import { AuthProvider, RequireAdmin, RequireAuth } from './auth';
 import { ThemeProvider } from './theme';
-import LandingPage from './site/LandingPage';
-import LoginPage from './site/LoginPage';
 import LegalPage from './site/LegalPage';
 
-// The dashboard (map, charts) loads only after sign-in, so the landing page stays light
+// The dashboard (map, charts) loads only after sign-in, so the sign-in step and the legal pages stay light
 const Dashboard = lazy(() => import('./App'));
 const Admin = lazy(() => import('./admin/AdminApp'));
 
-/** Public pages share the site layout (site.css), in the dashboard's theme. */
+/** Public pages (legal) share the site layout (site.css), in the dashboard's theme. */
 function SitePages() {
   return (
     <div className="site">
@@ -60,6 +58,17 @@ class DashboardBoundary extends Component<{ children: ReactNode }, { failed: boo
   }
 }
 
+// The site's home page is the dashboard (the portal's sign-in comes back to the site's base)
+const dashboard = (
+  <RequireAuth>
+    <DashboardBoundary>
+      <Suspense fallback={loading}>
+        <Dashboard />
+      </Suspense>
+    </DashboardBoundary>
+  </RequireAuth>
+);
+
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <BrowserRouter basename={import.meta.env.BASE_URL.replace(/\/$/, '') || '/'}>
@@ -68,19 +77,10 @@ createRoot(document.getElementById('root')!).render(
           <ScrollToTop />
           <Routes>
             <Route element={<SitePages />}>
-              <Route path="/" element={<LandingPage />} />
-              <Route path="/login" element={<LoginPage />} />
               <Route path="/legal/:page" element={<LegalPage />} />
             </Route>
-            <Route path="/dashboard" element={
-              <RequireAuth>
-                <DashboardBoundary>
-                  <Suspense fallback={loading}>
-                    <Dashboard />
-                  </Suspense>
-                </DashboardBoundary>
-              </RequireAuth>
-            } />
+            <Route path="/" element={dashboard} />
+            <Route path="/dashboard" element={dashboard} />
             <Route path="/admin/*" element={
               <RequireAuth>
                 <RequireAdmin>

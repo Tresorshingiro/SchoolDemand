@@ -6,14 +6,13 @@ import { DEFAULT_KM, defaultClassrooms, type PlannedSchoolInput } from '../newSc
 const TOGETHER = 'NUR+PRI'; // Pre-Primary and Primary in one school
 
 /** Name, level(s), classrooms, opening year and walking distance of a new school placed on the map. */
-export default function NewSchoolForm({ base, meta, initial, editing, error, busy, onKm, onSubmit, onCancel }: {
+export default function NewSchoolForm({ base, meta, initial, editing, error, busy, onSubmit, onCancel }: {
   base: ProjectionBase;
   meta: Meta;
   initial: PlannedSchoolInput;
   editing: boolean; // an existing planned school (else a new one)
   error: string | null;
   busy: boolean;
-  onKm: (km: number) => void; // the ring on the map follows the walking distance
   onSubmit: (s: PlannedSchoolInput) => void;
   onCancel: () => void;
 }) {
@@ -30,9 +29,7 @@ export default function NewSchoolForm({ base, meta, initial, editing, error, bus
     setChoice(next);
     const nextKeys = next === TOGETHER ? ['NUR', 'PRI'] : [next];
     setRooms(Object.fromEntries(nextKeys.map((k) => [k, defaultClassrooms(base, meta.levels.findIndex((l) => l.key === k))])));
-    const d = DEFAULT_KM[nextKeys[0]] ?? 3;
-    setKm(d);
-    onKm(d);
+    setKm(DEFAULT_KM[nextKeys[0]] ?? 3);
   };
   const field = 'mt-0.5 h-8 w-full px-2 text-sm';
   const label = 'mt-2 block text-xs text-ink2';
@@ -78,14 +75,11 @@ export default function NewSchoolForm({ base, meta, initial, editing, error, bus
           {base.years.slice(1).map((y) => <option key={y} value={y}>{y}</option>)}
         </select>
       </label>
-      <label className={label}>Walking distance (km)
+      <label className={label}>Walking distance (km), along roads and paths
         <input type="number" min={0.5} max={20} step={0.5} value={km}
-          onChange={(e) => {
-            const v = Number(e.target.value);
-            setKm(v);
-            if (v > 0 && v <= 20) onKm(v);
-          }} className={field} />
+          onChange={(e) => setKm(Number(e.target.value))} className={field} />
       </label>
+      <p className="mt-1 text-[11px] text-muted">Walking area appears after calculation</p>
 
       {error && <p className="mt-2 text-xs text-[var(--deficit)]" role="alert">{error}</p>}
       <div className="mt-3 flex items-center gap-2">

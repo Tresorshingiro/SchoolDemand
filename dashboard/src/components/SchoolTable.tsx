@@ -2,8 +2,9 @@ import { useEffect, useMemo, useState } from 'react';
 import { fmt, fmtGap, statusOf, type SchoolLevel } from '../data';
 import { STATUS_COLORS, type Mode } from '../theme';
 import { usePrinting } from '../print';
+import { fmtRatio, hasTeachers, pupilsPerTeacher } from '../teachers';
 
-type Key = 'n' | 'd' | 's' | 'st' | 'g' | 'ds' | 'a' | 'r' | 'gap';
+type Key = 'n' | 'd' | 's' | 'st' | 'g' | 'ds' | 'a' | 'r' | 'gap' | 't' | 'ptr';
 
 const COLS: { key: Key; label: string; num?: boolean; hideSm?: boolean }[] = [
   { key: 'n', label: 'School' },
@@ -15,7 +16,13 @@ const COLS: { key: Key; label: string; num?: boolean; hideSm?: boolean }[] = [
   { key: 'a', label: 'Available', num: true },
   { key: 'r', label: 'Required', num: true },
   { key: 'gap', label: 'Gap', num: true },
+  { key: 't', label: 'Teachers', num: true, hideSm: true },
+  { key: 'ptr', label: 'Pupils / teacher', num: true, hideSm: true },
 ];
+
+/** The value a column sorts by (no teacher data sorts below every number). */
+const sortValue = (r: SchoolLevel, key: Key): number | string =>
+  key === 'ptr' ? pupilsPerTeacher(r) ?? -1 : key === 't' ? (hasTeachers(r) ? r.t! : -1) : r[key];
 
 const PAGE = 10; // schools per page
 const PRINT_ROWS = 25; // schools in the printed report
@@ -114,8 +121,8 @@ export default function SchoolTable({ rows, mode, selected, onSelect, fullDay }:
       (!q || r.n.toLowerCase().includes(q) || String(r.c).includes(q)) && tests.every((t) => t(r)));
     const dir = sort.asc ? 1 : -1;
     return [...filtered].sort((a, b) => {
-      const x = a[sort.key];
-      const y = b[sort.key];
+      const x = sortValue(a, sort.key);
+      const y = sortValue(b, sort.key);
       const cmp = typeof x === 'number' && typeof y === 'number' ? x - y : String(x).localeCompare(String(y));
       return cmp * dir || a.n.localeCompare(b.n);
     });
@@ -222,6 +229,11 @@ export default function SchoolTable({ rows, mode, selected, onSelect, fullDay }:
                     {fmtGap(r.gap)}
                     <span className="sr-only"> ({status})</span>
                   </td>
+                  <td className="print-cell num hidden px-3 py-2 text-right md:table-cell"
+                    title={hasTeachers(r) ? undefined : 'No teacher data'}>
+                    {hasTeachers(r) ? fmt(r.t!) : '—'}
+                  </td>
+                  <td className="print-cell num hidden px-3 py-2 text-right md:table-cell">{fmtRatio(pupilsPerTeacher(r))}</td>
                 </tr>
               );
             })}
