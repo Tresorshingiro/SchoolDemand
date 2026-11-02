@@ -45,6 +45,35 @@ def test_default_projection_matches_the_files(client):
     assert got["combos"] == expected["combos"]
 
 
+def test_school_levels_carry_teachers(client):
+    rows = client.get("/api/school-levels").json()
+    with_t = [r for r in rows if r["t"] is not None]
+    assert all("t" in r for r in rows) and 3000 < len({r["c"] for r in with_t}) <= 3672
+    meta = client.get("/api/meta").json()
+    assert meta["teachers"]["year"] == 2026 and meta["teachers"]["schools"] == len({r["c"] for r in with_t})
+    assert "Students but no teachers recorded" in meta["issues"]
+
+
+def test_projection_config_has_the_rates(client):
+    rates = client.get("/api/projection/config").json()["rates"]
+    assert rates["schoolYear"] == "2023/24" and len(rates["districts"]) == 31
+    assert rates["districts"]["Rwanda"] == pytest.approx([0.204, 0.049])
+
+
+def test_viewer_reads_teachers(viewer):
+    rows = viewer.client.get("/api/school-levels").json()
+    assert any(r["t"] for r in rows)
+
+
+def test_the_projection_uses_the_published_rates(client):
+    """The live default run applies repetition and dropout: P2 2027 != P1 2026 (no plain cohort shift)."""
+    run = client.get("/api/projection/default").json()
+    meta = client.get("/api/meta").json()
+    p1, p2 = meta["grades"].index("P1"), meta["grades"].index("P2")
+    total = lambda y, k: sum(r[3] for r in run["grades"] if r[0] == y and r[2] == k)  # noqa: E731
+    assert total(2027, p2) < total(2026, p1)   # dropouts leave; P2 also keeps its repeaters but P1 is far larger
+
+
 def test_catchment_per_school_adds_up_to_the_default_plan(client):
     cfg = client.get("/api/projection/config").json()
     cat = cfg["catchment"]

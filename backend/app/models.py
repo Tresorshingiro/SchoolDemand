@@ -7,7 +7,9 @@ Additions to the design: `countries` (the outline the map masks outside of), `ca
 pre-primary school catchment — the GIS file gives school catchments, not the village x school shares of
 `school_catchments`), and `classrooms.source_classroom_id` (the roster's classroom_id; `mineduc_classroom_id`
 holds test_code, the cleaned room ID), `users` / `user_sessions` (sign-in to the dashboard, admin / viewer roles), `audit_log` (who changed what), `district_population` (NISR district totals), `classrooms.academic_year_id` (rooms per
-school year), `school_plans` / `planned_schools` / `planned_school_levels` (saved plans of new schools).
+school year), `school_plans` / `planned_schools` / `planned_school_levels` (saved plans of new schools),
+`district_flow_rates` (MINEDUC repetition and dropout per district), `school_teachers` / `school_staff` (MINEDUC teachers
+per school, level and school year).
 """
 from __future__ import annotations
 
@@ -168,6 +170,47 @@ class DistrictPopulation(Base):
     year: Mapped[int] = mapped_column(SmallInteger)
     age: Mapped[int] = mapped_column(SmallInteger)
     population: Mapped[int] = mapped_column(Integer)
+    import_run_id: Mapped[int | None] = mapped_column(ForeignKey("import_runs.id"))
+
+
+class DistrictFlowRate(Base):
+    """Repetition and dropout rates per district and school year (MINEDUC; NULL district = Rwanda): how students move
+    between grades in the projection (domain/rates.py)."""
+    __tablename__ = "district_flow_rates"
+    __table_args__ = (UniqueConstraint("district_id", "end_year", postgresql_nulls_not_distinct=True),)
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    district_id: Mapped[int | None] = mapped_column(ForeignKey("districts.id"), comment="NULL = Rwanda")
+    school_year: Mapped[str] = mapped_column(String(9), comment="as in the file, e.g. 2023/24")
+    end_year: Mapped[int] = mapped_column(SmallInteger, comment="2023/24 -> 2024")
+    repetition = mapped_column(Numeric(6, 4), nullable=False, comment="share, Average of boys and girls")
+    dropout = mapped_column(Numeric(6, 4), nullable=False)
+    import_run_id: Mapped[int | None] = mapped_column(ForeignKey("import_runs.id"))
+
+
+# ---------------------------------------------------------------- teachers
+
+
+class SchoolTeachers(Base):
+    """Teachers of a school's level in a school year (MINEDUC; domain/teachers.py)."""
+    __tablename__ = "school_teachers"
+    __table_args__ = (UniqueConstraint("school_id", "academic_year_id", "level_id"),)
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    school_id: Mapped[int] = mapped_column(ForeignKey("schools.id"))
+    academic_year_id: Mapped[int] = mapped_column(ForeignKey("academic_years.id"))
+    level_id: Mapped[int] = mapped_column(ForeignKey("school_levels.id"))
+    teachers: Mapped[int] = mapped_column(Integer)
+    import_run_id: Mapped[int | None] = mapped_column(ForeignKey("import_runs.id"))
+
+
+class SchoolStaff(Base):
+    """A school's status and administrative staff in a school year (the teachers file)."""
+    __tablename__ = "school_staff"
+    __table_args__ = (UniqueConstraint("school_id", "academic_year_id"),)
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    school_id: Mapped[int] = mapped_column(ForeignKey("schools.id"))
+    academic_year_id: Mapped[int] = mapped_column(ForeignKey("academic_years.id"))
+    status: Mapped[str | None] = mapped_column(String(30), comment="PUBLIC, GOVERNMENT_AIDED ...")
+    administrative_staff: Mapped[int | None] = mapped_column(Integer)
     import_run_id: Mapped[int | None] = mapped_column(ForeignKey("import_runs.id"))
 
 

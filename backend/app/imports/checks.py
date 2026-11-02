@@ -3,11 +3,15 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
+from pathlib import Path
 
 import pandas as pd
 
 from ..domain import analysis as A
 from ..domain import projection as P
+from ..domain import rates as RT
+from ..domain import teachers as T
+from ..domain.walking import WalkingNetwork, extract_date
 from .report import Report
 from .rooms import room_ids
 from .summary import expand_summary, is_summary
@@ -33,6 +37,7 @@ class CheckContext:
     preprimary: set[int]                             # pre-primary school codes of the newest school year
     catchment_totals: pd.DataFrame | None            # district x year: children aged 3 from the live catchment
     roster_of: Callable[[int], pd.DataFrame]         # the published roster of a school year
+    network_km: float | None = None                  # total km of the live walking network
 
 
 def _rows(df: pd.DataFrame, mask, cols: list[str]) -> pd.DataFrame:
@@ -252,7 +257,130 @@ def check_nisr(raw: pd.DataFrame, year: int | None, ctx: CheckContext) -> tuple[
     return parsed, rep
 
 
-CHECKS = {"school_data": check_school_data, "catchment": check_catchment, "nisr_population": check_nisr}
+# ---------------------------------------------------------------- repetition / dropout rates and teachers
+def check_flow_rates(raw: dict[str, pd.DataFrame], year: int | None, ctx: CheckContext
+                     ) -> tuple[pd.DataFrame | None, Report]:
+    """The MINEDUC rates workbook (both sheets, read with header=None): rows of RT.read_sheets, every school year."""
+    rep = Report()
+    try:
+        long = RT.read_sheets(raw)
+    except ValueError as e:
+        rep.error("structure", str(e))
+        return None, rep
+    show = ["district", "school_year", "repetition", "dropout"]
+    values = long[["repetition", "dropout"]].apply(pd.to_numeric, errors="coerce")
+    bad = (values.isna() | (values < 0) | (values > 1)).any(axis=1)
+    rep.error("values", "Rate empty, not a number or outside 0-1 (0.204 = 20.4%)", long.loc[bad, show])
+    long[["repetition", "dropout"]] = values
+    rep.error("sum", "Repetition + dropout of 1 or more (nobody would be promoted)",
+              long.loc[~bad & (values.sum(axis=1) >= 1), show])
+    canonical = {d.casefold(): d for d in [*ctx.districts, RT.NATIONAL]}
+    long["district"] = long["district"].map(lambda d: canonical.get(d.casefold(), d))
+    newest = long[long["end_year"] == long["end_year"].max()]
+    if RT.NATIONAL not in set(newest["district"]):
+        rep.error("no_national", f"No {RT.NATIONAL} row in {newest['school_year'].iloc[0]}: it is used for schools "
+                                 "without a district")
+    if not rep.ok:
+        return None, rep
+    unknown = ~long["district"].isin(canonical.values())
+    rep.warning("unknown_districts", "Unknown district (not one of the 30 districts; ignored)",
+                long.loc[unknown, ["district", "school_year"]].drop_duplicates("district"))
+    long = long[~unknown].reset_index(drop=True)
+    rep.warning("missing_districts", f"Districts without rates in {newest['school_year'].iloc[0]} (they use the "
+                                     f"{RT.NATIONAL} rates)",
+                pd.DataFrame({"district": [d for d in ctx.districts if d not in set(newest["district"])]}))
+    rep.summary = {"school_year": newest["school_year"].iloc[0], "districts": int(newest["district"].nunique()),
+                   "school_years": sorted(long["school_year"].unique().tolist())}
+    return long, rep
+
+
+def check_teachers(raw: pd.DataFrame, year: int | None, ctx: CheckContext) -> tuple[pd.DataFrame | None, Report]:
+    """The MINEDUC teachers file: one row per school, teachers per level (blank = none)."""
+    rep = Report()
+    df, missing = pick_columns(raw, ["school_code"], [*T.LEVEL_COLUMNS, *T.STAFF_COLUMNS])
+    levels = [c for c in T.LEVEL_COLUMNS if c in df]
+    if missing:
+        rep.error("missing_columns", "Missing column: school_code")
+    if not levels:
+        rep.error("missing_columns", "No teacher columns: expected " + ", ".join(T.LEVEL_COLUMNS))
+    if not rep.ok:
+        return None, rep
+    df = df.reset_index(drop=True)
+    df.insert(0, "row", df.index + 2)
+    code, bad_code = _whole(df["school_code"])
+    rep.error("school_code", "School code empty or not a number", df.loc[bad_code, ["row", "school_code"]])
+    numbers = df[levels].apply(pd.to_numeric, errors="coerce")
+    bad = ((numbers.isna() & df[levels].notna()) | (numbers < 0) | (numbers % 1 > 0)).any(axis=1)
+    rep.error("values", "Teachers not a whole number or negative", df.loc[bad, ["row", "school_code", *levels]])
+    dup = ~bad_code & code.duplicated(keep=False)
+    rep.error("duplicates", "The same school twice", df.loc[dup, ["row", "school_code"]])
+    if not rep.ok:
+        return None, rep
+    df["school_code"] = code.astype("int64")
+    df[levels] = numbers
+    if "total_teaching_staff" in df:
+        total = pd.to_numeric(df["total_teaching_staff"], errors="coerce")
+        off = total.notna() & (numbers.fillna(0).sum(axis=1) != total)
+        rep.warning("total", "The levels do not add up to total_teaching_staff (the levels are used)",
+                    df.loc[off, ["row", "school_code", *levels, "total_teaching_staff"]])
+    if ctx.live_years and year is not None and year > max(ctx.live_years):
+        rep.warning("no_school_year", f"No school data for {year} yet: these teachers show on the dashboard once the "
+                                      f"{year} school data is published (checked against {max(ctx.live_years)})")
+    if ctx.live_years:
+        roster = ctx.roster_of(year if year in ctx.live_years else max(ctx.live_years))
+        unknown = ~df["school_code"].isin(set(roster["school_code"]))
+        rep.warning("unknown_schools", "Not a school of the school data (ignored)",
+                    df.loc[unknown, ["row", "school_code"]])
+        issues = T.teacher_issues(roster, T.to_long(df))
+        for code_, issue in (("no_teachers", T.NO_TEACHERS), ("no_students", T.NO_STUDENTS)):
+            rep.warning(code_, issue, issues.loc[issues["issue"] == issue, ["school_code", "detail"]])
+    rep.summary = {"schools": len(df), "teachers": int(numbers.sum().sum())}
+    return df.drop(columns=["row"]), rep
+
+
+# ---------------------------------------------------------------- walking network
+MIN_SHARE = 0.90       # of the live schools: within FAR_KM of the network, and on its largest connected part
+FAR_KM = 0.5
+SHRINK = 0.20          # warn when the network is this much smaller than the live one
+
+
+def check_walking_network(path: Path, year: int | None, ctx: CheckContext) -> tuple[WalkingNetwork | None, Report]:
+    """An OpenStreetMap extract (.osm.pbf): readable, walkable, and reaching the schools of the newest school year."""
+    rep = Report()
+    try:
+        network = WalkingNetwork.from_pbf(path)
+    except ValueError:
+        rep.error("no_ways", "The file has no walkable roads or paths.")
+        return None, rep
+    except (RuntimeError, OSError) as e:
+        rep.error("unreadable", f"The file could not be read as an OpenStreetMap extract: {e}")
+        return None, rep
+    rep.summary = {"km": round(network.total_km, 1), "points": network.nodes, "extract_date": extract_date(path)}
+    if ctx.network_km and network.total_km < ctx.network_km * (1 - SHRINK):
+        rep.warning("shrunk", f"This network has {network.total_km:,.0f} km, more than {SHRINK:.0%} below the live one "
+                              f"({ctx.network_km:,.0f} km).")
+    if not ctx.live_years:
+        return network, rep
+    schools = ctx.roster_of(max(ctx.live_years)).drop_duplicates("school_code")
+    lats, lons = schools["latitude"].to_numpy(dtype=float), schools["longitude"].to_numpy(dtype=float)
+    cover = network.coverage(lats, lons)
+    rep.summary.update(schools=len(schools), within_100m=round(cover["within_100m"], 4),
+                       within_500m=round(cover["within_500m"], 4), on_main=round(cover["on_main"], 4))
+    if cover["within_500m"] < MIN_SHARE:
+        rep.error("coverage", f"Only {cover['within_500m']:.1%} of the schools are within 500 m of this network "
+                              f"(at least {MIN_SHARE:.0%} needed).")
+    if cover["on_main"] < MIN_SHARE:
+        rep.error("connected", f"Only {cover['on_main']:.1%} of the schools are on its largest connected part "
+                               f"(at least {MIN_SHARE:.0%} needed).")
+    snap, off_main = network.far(lats, lons)
+    rows = schools[["school_code", "school_name", "latitude", "longitude"]].assign(km_to_network=snap.round(3))
+    rep.warning("far", "Schools more than 500 m from the network", rows[snap > FAR_KM])
+    rep.warning("disconnected", "Schools off the largest connected part", rows[off_main])
+    return (network if rep.ok else None), rep
+
+
+CHECKS = {"school_data": check_school_data, "catchment": check_catchment, "nisr_population": check_nisr,
+          "flow_rates": check_flow_rates, "teachers": check_teachers, "walking_network": check_walking_network}
 
 
 # ---------------------------------------------------------------- templates (the portal's "Template" downloads)
@@ -263,8 +391,32 @@ def _school_template(h: P.Horizon) -> pd.DataFrame:
         "classroom_id": "a9c0b300-8280-4d7e-bed5-b991837c0262", "classroom_name": "P1 A", A.STUDENTS: 45}])
 
 
-TEMPLATES: dict[str, Callable[[P.Horizon], pd.DataFrame]] = {
+def _rates_sheet(title: str, rows: dict[str, tuple[float, float, float]]) -> pd.DataFrame:
+    """A rates sheet in the MINEDUC layout (written without a header row): rows = {district: (male, female, average)}."""
+    head = [[title, None, None, None], [None, "2023/24", None, None], ["District", "Male", "Female", "Average"]]
+    return pd.DataFrame(head + [[d, *v] for d, v in rows.items()])
+
+
+def _rates_template(h: P.Horizon) -> dict[str, pd.DataFrame]:
+    return {"Repetition Rate": _rates_sheet("Repetition rate", {"Gasabo": (0.117, 0.096, 0.107),
+                                                                RT.NATIONAL: (0.223, 0.186, 0.204)}),
+            "Dropout Rate": _rates_sheet("Dropout rate", {"Gasabo": (0.039, 0.031, 0.035),
+                                                          RT.NATIONAL: (0.054, 0.043, 0.049)})}
+
+
+def _teachers_template(h: P.Horizon) -> pd.DataFrame:
+    return pd.DataFrame([{"school_code": 110103, "school_name": "EP GITEGA", "district": "Nyarugenge",
+                          "sector": "Gitega", "school_status": "PUBLIC", "total_preprimary_teachers": 6,
+                          "total_primary_teachers": 27, "total_lower_secondary_teachers": None,
+                          "Prof_sec_teacher_total": None, "total_upper_secondary_teachers": None,
+                          "total_tvet_teachers": None, "total_teaching_staff": 33, "total_administrative_staff": 2}])
+
+
+# A table, or {sheet name: sheet written as laid out} for a workbook of several sheets
+TEMPLATES: dict[str, Callable[[P.Horizon], pd.DataFrame | dict[str, pd.DataFrame]]] = {
     "school_data": _school_template,
     "catchment": lambda h: pd.DataFrame([{"school_code": 110103, **{f"Pop{y}": 37 for y in h.future}}]),
     "nisr_population": lambda h: pd.DataFrame([{"district_name": "Gasabo", **{f"pop3_{y}": 12000 for y in h.future}}]),
+    "flow_rates": _rates_template,
+    "teachers": _teachers_template,
 }

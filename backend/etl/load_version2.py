@@ -4,17 +4,22 @@ Load the development data through the same pipeline as the admin portal (upload 
   Version 2.xlsx                   2026 school data (schools, rooms, class groups)
   Chachement area.xlsx             children aged 3 per pre-primary school catchment
   NISR population.xlsx / .csv      children aged 3 per district (optional; pop3_YYYY columns)
+  Repetition and dropout rates.xlsx  MINEDUC repetition and dropout per district (the projection needs them)
+  Teachers.xlsx                    MINEDUC teachers per school and level (loaded as the newest school year)
+  rwanda-latest.osm.pbf            OpenStreetMap roads and paths, for planned schools' walking distance (optional)
   boundaries/*.geojson             country, district and sector outlines (scripts/build_boundaries.py)
 
 from SCHOOL_DATA_DIR (data-sources/ in the repository, /data in the API container). Reference tables, provinces,
-districts and sectors are upserted by their code first. A file already live is skipped, so the job can be re-run.
+districts and sectors are upserted by their code first. A file already live is skipped, so the job can be re-run, and
+so is a kind whose live data came from another file (an upload in the admin portal): --replace publishes over it.
 The API picks the new data up on restart or POST /api/admin/reload.
 
-Run (from backend/):  python -m etl.load_version2
+Run (from backend/):  python -m etl.load_version2 [--replace]
 """
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 
 from fastapi import HTTPException
@@ -25,11 +30,15 @@ from app import models as M
 from app.db import SessionLocal
 from app.domain import analysis as A
 from app.domain import projection as P
+from app.domain import rates as RT
+from app.domain import teachers as T
 from app.imports import service as S
 from app.imports.sql import upsert
+from app.services import repository as R
 
 BOUNDARIES = A.DATA_DIR / "boundaries"
 NISR_FILES = [A.DATA_DIR / "NISR population.xlsx", A.DATA_DIR / "NISR population.csv"]
+WALKING_NETWORK = A.DATA_DIR / "rwanda-latest.osm.pbf"  # optional: Geofabrik's Rwanda extract
 ENTRY_AGE = {"NUR": 3, "PRI": 6, "LSE": 12, "USE": 15, "TVE": 15, "TTC": 15}  # official entry age of each level
 NEXT_LEVEL = {"N3": "P1", "P6": "S1", "S3": "S4"}  # progression between levels (S3 also feeds L3 / Y1)
 
@@ -82,9 +91,14 @@ def ensure_reference(session: Session) -> None:
                      for f in geojson("sectors")])
 
 
-def load_file(kind: str, path: Path, year: int | None = None) -> str:
-    """Upload, check and publish one file (the API is not reloaded: restart it or POST /api/admin/reload)."""
+def load_file(kind: str, path: Path, year: int | None = None, replace: bool = False) -> str:
+    """Upload, check and publish one file (the API is not reloaded: restart it or POST /api/admin/reload). Live data
+    published from another file (an upload in the admin portal) is kept unless `replace`."""
     with SessionLocal() as s:
+        current = S.live(s, kind, year)
+        if current is not None and current.file_name != path.name and not replace:
+            return (f"{path.name}: skipped - the live data is {current.file_name} (import {current.id}); upload this "
+                    "file in the admin portal to replace it, or run with --replace")
         try:
             run = S.create_upload(s, kind=kind, file_name=path.name, content=path.read_bytes(), academic_year=year,
                                   user=None)
@@ -105,16 +119,27 @@ def load_file(kind: str, path: Path, year: int | None = None) -> str:
             f" - {run.error}" if run.error else "")
 
 
-def main() -> None:
+def teachers_year() -> int:
+    """The school year Teachers.xlsx is loaded as: the newest published school year (2026 before any is)."""
+    with SessionLocal() as s:
+        return max(R.school_years(s), default=P.BASE_YEAR)
+
+
+def main(replace: bool = False) -> None:
     with SessionLocal() as session, session.begin():
         ensure_reference(session)
     print("reference data and boundaries: ok")
-    print(load_file("school_data", A.SOURCE_XLSX, P.BASE_YEAR))
-    print(load_file("catchment", P.CATCHMENT_XLSX))
+    print(load_file("school_data", A.SOURCE_XLSX, P.BASE_YEAR, replace))
+    print(load_file("catchment", P.CATCHMENT_XLSX, replace=replace))
+    print(load_file("flow_rates", RT.RATES_XLSX, replace=replace))
+    if T.TEACHERS_XLSX.exists():
+        print(load_file("teachers", T.TEACHERS_XLSX, teachers_year(), replace))
     for path in NISR_FILES:
         if path.exists():
-            print(load_file("nisr_population", path))
+            print(load_file("nisr_population", path, replace=replace))
+    if WALKING_NETWORK.exists():
+        print(load_file("walking_network", WALKING_NETWORK, replace=replace))
 
 
 if __name__ == "__main__":
-    main()
+    main(replace="--replace" in sys.argv[1:])

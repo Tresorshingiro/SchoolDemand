@@ -5,6 +5,7 @@ import pandas as pd
 from app.domain import analysis as A
 from app.domain import dashboard as D
 from app.domain import projection as P
+from app.domain import rates as RT
 
 
 def tiny_roster() -> pd.DataFrame:
@@ -61,7 +62,7 @@ def test_project_on_a_later_horizon():
     roster = tiny_roster()
     h = P.Horizon(2027)
     catch = pd.DataFrame({y: [50] for y in h.future}, index=pd.Index([1], name="school_code"))
-    info, schools, grades, combos = P.project(roster, catchment=catch, horizon=h)
+    info, schools, grades, combos = P.project(roster, catchment=catch, horizon=h, rates=RT.ZERO)  # no repetition
     assert sorted(schools["year"].unique()) == h.years
     n1 = grades[grades["grade"] == "N1"].set_index("year")["students"]
     assert n1[2027] == 40 and n1[2028] == 50

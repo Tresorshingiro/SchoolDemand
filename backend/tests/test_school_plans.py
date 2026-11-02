@@ -1,6 +1,7 @@
 """Saved new-school plans (needs the database)."""
 import secrets
 
+import pytest
 from sqlalchemy import select, update
 
 from app import models as M
@@ -8,6 +9,8 @@ from app.db import SessionLocal
 
 from .test_new_schools_api import body
 from .test_roles import audit_rows
+
+pytestmark = pytest.mark.usefixtures("walking_grid")
 
 
 def plan(name: str | None = None, **school) -> dict:

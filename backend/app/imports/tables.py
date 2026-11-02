@@ -12,9 +12,13 @@ def norm(name) -> str:
     return re.sub(r"[\s_]+", "", str(name)).casefold()
 
 
-def read_table(path: Path) -> pd.DataFrame:
+def read_table(path: Path, all_sheets: bool = False) -> pd.DataFrame | dict[str, pd.DataFrame]:
     """The first sheet of an .xlsx, or a .csv (comma or semicolon, with or without a byte-order mark; cells kept as
-    text and converted by the checks)."""
+    text and converted by the checks). all_sheets: every sheet of an .xlsx as it is laid out (no header row)."""
+    if all_sheets:
+        if path.suffix.lower() != ".xlsx":
+            raise ValueError("upload the .xlsx file with its sheets")
+        return pd.read_excel(path, sheet_name=None, header=None)
     if path.suffix.lower() == ".csv":
         return pd.read_csv(path, dtype=str, sep=None, engine="python", encoding="utf-8-sig")
     return pd.read_excel(path, sheet_name=0)

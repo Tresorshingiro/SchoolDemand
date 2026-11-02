@@ -6,7 +6,8 @@ A planned school is a point on the map with one level (or Pre-Primary and Primar
 an opening year and a walking distance. It joins the projection as an extra school with no students in the base
 year and its classrooms as rooms. From its opening year, every year, it takes the extra students of the crowded
 schools of its level within walking distance (its ring) — students their rooms cannot seat — up to its own places.
-Nothing else changes: the actual data never sees planned schools, and without any the projection is unchanged.
+Walking distance follows the road and path network (walking.py), never a straight line; a school with no route is not
+in the ring. Nothing else changes: the actual data never sees planned schools, and without any the projection is unchanged.
 """
 from __future__ import annotations
 
@@ -19,6 +20,13 @@ import pandas as pd
 
 from . import analysis as A
 from . import projection as P
+from . import rates as RT
+from . import walking as WK
+
+
+class NoWalkingNetwork(Exception):
+    """Planned schools need a published walking network."""
+
 
 LEVEL_KEYS = {key: label for key, label, _, _ in A.LEVELS}  # "NUR" -> "Pre-Primary", ...
 LEVEL_LABELS = [label for label, _ in P.LEVELS]
@@ -93,31 +101,53 @@ def _coords(base: P.Base) -> tuple[np.ndarray, np.ndarray]:
     return (base.info["latitude"].to_numpy(dtype=float), base.info["longitude"].to_numpy(dtype=float))
 
 
-def _ring(base: P.Base, row: int, li: int, km: float, eligible: np.ndarray) -> np.ndarray:
-    """Rows of the schools offering level `li` within `km` of school `row` (among `eligible`)."""
+def reach_table(base: P.Base, planned: Sequence[PlannedSchool], network: WK.WalkingNetwork) -> list[WK.Reach]:
+    """What each planned school reaches on foot, up to its walking distance, over every row of `base`
+    (base = with_planned(...)). Calculated once per run: the network does not change between years."""
     lats, lons = _coords(base)
-    d = distance_km(lats[row], lons[row], lats, lons)
-    ok = eligible & (base.rooms[:, li] > 0) & (d <= km)
+    return [network.reach(s.latitude, s.longitude, lats, lons, s.walking_km) for s in planned]
+
+
+def _ring(base: P.Base, row: int, li: int, reach: WK.Reach, eligible: np.ndarray) -> np.ndarray:
+    """Rows of the schools offering level `li` that school `row` reaches on foot (among `eligible`)."""
+    ok = eligible & (base.rooms[:, li] > 0) & np.isfinite(reach.km)
     ok[row] = False
     return np.nonzero(ok)[0]
 
 
-def rings(base: P.Base, planned: Sequence[PlannedSchool]) -> list[dict[str, list[int]]]:
+def rings(base: P.Base, planned: Sequence[PlannedSchool], network: WK.WalkingNetwork,
+          reaches: Sequence[WK.Reach] | None = None) -> list[dict[str, list[int]]]:
     """For each planned school (base = with_planned(...)): level -> codes of the existing schools in its ring."""
+    reaches = reaches if reaches is not None else reach_table(base, planned, network)
     n = len(base.info) - len(planned)
     existing = np.arange(len(base.info)) < n
     codes = base.info["school_code"].to_numpy()
-    return [{label: [int(c) for c in codes[_ring(base, n + i, LEVEL_LABELS.index(label), s.walking_km, existing)]]
+    return [{label: [int(c) for c in codes[_ring(base, n + i, LEVEL_LABELS.index(label), reaches[i], existing)]]
              for label, _ in s.classrooms} for i, s in enumerate(planned)]
 
 
+def unreachable(base: P.Base, planned: Sequence[PlannedSchool], reaches: Sequence[WK.Reach]) -> list[dict[str, int]]:
+    """For each planned school: level -> existing schools offering it, within its distance in a straight line, on a part
+    of the network not connected to the planned point's. Only reported to the planner; never decides who gives."""
+    n = len(base.info) - len(planned)
+    lats, lons = _coords(base)
+    existing = np.arange(len(base.info)) < n
+    out = []
+    for s, reach in zip(planned, reaches):
+        near = distance_km(s.latitude, s.longitude, lats, lons) <= s.walking_km
+        out.append({label: int((existing & near & ~reach.connected
+                                & (base.rooms[:, LEVEL_LABELS.index(label)] > 0)).sum()) for label, _ in s.classrooms})
+    return out
+
+
 # ---------------------------------------------------------------- taking the extra students
-def _level_rooms(base: P.Base, st: P.YearState, rows: np.ndarray, li: int) -> tuple[np.ndarray, np.ndarray]:
+def _level_rooms(base: P.Base, st: P.YearState, rows: np.ndarray, li: int, capacity: int | None = None,
+                 ) -> tuple[np.ndarray, np.ndarray]:
     """(rooms assigned to each grade, rooms required by each grade) of `rows` for level `li` this year — the room
     sharing P.project does."""
     label, grades = P.LEVELS[li]
     cols = [P.GRADES.index(g) for g in grades]
-    cap = P.CAPACITY[label]
+    cap = capacity or P.CAPACITY[label]
     s, g, rooms = st.students[rows][:, cols], st.groups[rows][:, cols], base.rooms[rows, li]
     if label in A.FULL_DAY:
         if label in st.c_students:
@@ -167,15 +197,16 @@ def _move_groups(cs: np.ndarray, cg: np.ndarray, rs: np.ndarray, rg: np.ndarray,
     return moved, removed
 
 
-def _take(base: P.Base, st: P.YearState, row: int, li: int, rooms_new: int, ring: np.ndarray) -> None:
+def _take(base: P.Base, st: P.YearState, row: int, li: int, rooms_new: int, ring: np.ndarray,
+          capacity: int | None = None) -> None:
     """The planned school `row` takes the extra students of the `ring` schools in every grade of level `li`."""
     if not len(ring):
         return
     label, grades = P.LEVELS[li]
     cols = [P.GRADES.index(g) for g in grades]
-    cap = P.CAPACITY[label]
+    cap = capacity or P.CAPACITY[label]
     full_day = label in A.FULL_DAY
-    assigned, need = _level_rooms(base, st, ring, li)
+    assigned, need = _level_rooms(base, st, ring, li, capacity)
     # Only the crowded schools give (classroom gap of the level < 0), the largest shortage first
     if full_day:
         required = need.sum(axis=1)
@@ -218,7 +249,8 @@ def _take(base: P.Base, st: P.YearState, row: int, li: int, rooms_new: int, ring
                 g[row, col] += int(rg.sum()) - groups_before
 
 
-def transfer_hook(base: P.Base, planned: Sequence[PlannedSchool]) -> Callable[[P.YearState], None]:
+def transfer_hook(base: P.Base, planned: Sequence[PlannedSchool], reaches: Sequence[WK.Reach],
+                  capacity: int | None = None) -> Callable[[P.YearState], None]:
     """The P.project hook that lets the planned schools (rows at the end of `base`) take their students each year:
     in order of opening year (then as listed); a ring includes a planned school handled before it."""
     n = len(base.info) - len(planned)
@@ -234,7 +266,7 @@ def transfer_hook(base: P.Base, planned: Sequence[PlannedSchool]) -> Callable[[P
             row = n + i
             for label, rooms_new in s.classrooms:
                 li = LEVEL_LABELS.index(label)
-                _take(base, st, row, li, rooms_new, _ring(base, row, li, s.walking_km, eligible))
+                _take(base, st, row, li, rooms_new, _ring(base, row, li, reaches[i], eligible), capacity)
             eligible[row] = True  # open: in the rings of the planned schools handled after it
 
     return hook
@@ -269,14 +301,25 @@ def summary(before: pd.DataFrame, after: pd.DataFrame, info: pd.DataFrame, plann
 
 def project(roster: pd.DataFrame, intake: dict[str, pd.DataFrame] | None = None,
             planned: Sequence[PlannedSchool] = (), *, catchment: pd.DataFrame | None = None,
-            base: P.Base | None = None, horizon: P.Horizon = P.DEFAULT_HORIZON,
+            base: P.Base | None = None, horizon: P.Horizon = P.DEFAULT_HORIZON, rates: RT.FlowRates | None = None,
+            capacity: int | None = None, network: WK.WalkingNetwork | None = None,
+            reaches: Sequence[WK.Reach] | None = None,
             ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-    """P.project with the planned schools included (P.project itself when there are none)."""
+    """P.project with the planned schools included (P.project itself when there are none; only planned schools need
+    the walking network: NoWalkingNetwork without it; `reaches` = reach_table when the caller has it). With `capacity`, planned schools form their class groups at that
+    size in every year; existing schools keep theirs."""
     if not planned:
-        return P.project(roster, intake, catchment=catchment, base=base, horizon=horizon)
+        return P.project(roster, intake, catchment=catchment, base=base, horizon=horizon, rates=rates, capacity=capacity)
+    if network is None and reaches is None:
+        raise NoWalkingNetwork("No walking network published yet.")
     b = with_planned(base if base is not None else P.base_schools(roster), planned)
+    fallback = np.tile([float(P.CAPACITY[A.GRADE_TO_LEVEL[g]]) for g in P.GRADES], (len(b.info), 1))
+    if capacity:
+        fallback[-len(planned):] = float(capacity)
     info, *frames = P.project(roster, intake, catchment=catchment, base=b, horizon=horizon,
-                              after_intake=transfer_hook(b, planned))
+                              after_intake=transfer_hook(b, planned, reaches or reach_table(b, planned, network), capacity),
+                              rates=rates, capacity=capacity,
+                              stream_fallback=fallback)
     # A planned school is not in the figures before it opens (nor in the base year)
     opening = pd.Series({planned_code(i): s.opening_year for i, s in enumerate(planned)})
     keep = [f[~(f["year"] < f["school_code"].map(opening).fillna(-1))].reset_index(drop=True) for f in frames]

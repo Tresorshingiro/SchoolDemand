@@ -8,6 +8,8 @@ from sqlalchemy.orm import Session
 
 from .. import models as M
 from ..domain import analysis as A
+from ..domain import rates as RT
+from ..domain import teachers as T
 from ..services import repository as R
 from .sql import none, reset_sequence
 
@@ -118,14 +120,67 @@ def publish_nisr(session: Session, run: M.ImportRun, nisr: pd.DataFrame) -> None
     reset_sequence(session, "district_population")
 
 
-PUBLISH = {"school_data": publish_school_data, "catchment": publish_catchment, "nisr_population": publish_nisr}
+def publish_flow_rates(session: Session, run: M.ImportRun, long: pd.DataFrame) -> None:
+    """Replace the repetition and dropout rates (every school year of the file; Rwanda as a NULL district)."""
+    session.execute(delete(M.DistrictFlowRate))
+    ids = dict(session.execute(select(M.District.name, M.District.id)).all())
+    rows = [{"district_id": ids.get(r.district), "school_year": r.school_year, "end_year": int(r.end_year),
+             "repetition": float(r.repetition), "dropout": float(r.dropout), "import_run_id": run.id}
+            for r in long.itertuples(index=False) if r.district in ids or r.district == RT.NATIONAL]
+    if rows:
+        session.execute(insert(M.DistrictFlowRate.__table__), rows)
+    reset_sequence(session, "district_flow_rates")
+
+
+def publish_teachers(session: Session, run: M.ImportRun, wide: pd.DataFrame) -> None:
+    """Replace one school year's teachers and school staff (schools not in the school data are skipped)."""
+    year_id = _year_id(session, run.academic_year)
+    run.academic_year_id = year_id
+    _clear_teachers(session, year_id)
+    school_id = {int(k): v for k, v in session.execute(select(M.School.mineduc_code, M.School.id)).all()}
+    levels = dict(session.execute(select(M.SchoolLevel.name, M.SchoolLevel.id)).all())
+    rows = [{"school_id": school_id[r.school_code], "academic_year_id": year_id, "level_id": levels[r.level],
+             "teachers": int(r.teachers), "import_run_id": run.id}
+            for r in T.to_long(wide).itertuples(index=False) if r.school_code in school_id]
+    if rows:
+        session.execute(insert(M.SchoolTeachers.__table__), rows)
+    staff = [{"school_id": school_id[int(r["school_code"])], "academic_year_id": year_id,
+              "status": none(r.get("school_status")), "administrative_staff": _whole(r.get("total_administrative_staff")),
+              "import_run_id": run.id}
+             for r in wide.to_dict("records") if int(r["school_code"]) in school_id]
+    if staff:
+        session.execute(insert(M.SchoolStaff.__table__), staff)
+    for table in ("school_teachers", "school_staff"):
+        reset_sequence(session, table)
+
+
+def _whole(v) -> int | None:
+    """A count from the file (text or a number, blank = None)."""
+    n = pd.to_numeric(none(v), errors="coerce")
+    return None if n is None or pd.isna(n) else int(n)
+
+
+def _clear_teachers(session: Session, year_id: int) -> None:
+    session.execute(delete(M.SchoolTeachers).where(M.SchoolTeachers.academic_year_id == year_id))
+    session.execute(delete(M.SchoolStaff).where(M.SchoolStaff.academic_year_id == year_id))
+
+
+def publish_walking_network(session: Session, run: M.ImportRun, network) -> None:
+    """Nothing to write: the routing file is already beside the upload, and being live is what makes it used."""
+
+
+PUBLISH = {"school_data": publish_school_data, "catchment": publish_catchment, "nisr_population": publish_nisr,
+           "flow_rates": publish_flow_rates, "teachers": publish_teachers, "walking_network": publish_walking_network}
 
 
 def withdraw_rows(session: Session, run: M.ImportRun) -> None:
-    """Remove a live school year (another year stays) or the NISR figures."""
+    """Remove a live school year (another year stays), a year's teachers or the NISR figures."""
     if run.kind == "nisr_population":
         session.execute(delete(M.DistrictPopulation))
         return
     year_id = session.scalar(select(M.AcademicYear.id).where(M.AcademicYear.year == run.academic_year))
+    if run.kind == "teachers":
+        _clear_teachers(session, year_id)
+        return
     _clear_year(session, year_id)
     refresh_schools(session, max(y for y in R.school_years(session) if y != run.academic_year))

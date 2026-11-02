@@ -24,6 +24,9 @@ class PlannedSchoolIn(BaseModel):
 class ProjectionRequest(BaseModel):
     intake: Intake | None = Field(None, description="Intake plan; missing districts / grades take the default plan")
     schools: list[PlannedSchoolIn] | None = Field(None, max_length=50, description="Planned new schools")
+    capacity: int = Field(46, ge=20, le=100, strict=True, description="Students per classroom, every level")
+    repetition: bool = Field(True, description="Apply the repetition rates")
+    dropout: bool = Field(True, description="Apply the dropout rates")
 
 
 class LoginIn(BaseModel):

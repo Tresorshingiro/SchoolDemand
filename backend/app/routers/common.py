@@ -46,6 +46,8 @@ def complete_intake(intake: Intake | None) -> Intake:
 def complete_schools(schools: list[PlannedSchoolIn] | None, session: Session) -> tuple[NS.PlannedSchool, ...]:
     """Validate planned new schools and place them in their district and sector."""
     years = store.snapshot.horizon.future
+    if schools and store.snapshot.network is None:
+        raise HTTPException(422, "No walking network published yet.")
     out = []
     for s in schools or []:
         if not s.levels or any(k not in NS.LEVEL_KEYS for k in s.levels) \

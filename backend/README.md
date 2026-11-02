@@ -49,17 +49,15 @@ sign-ins. Passwords are changed and reset in the portal. From the command line:
 .venv\Scripts\python -m app.users list
 ```
 
-**Single sign-on.** When the dashboard is served from the portal's own site (`https://gh.space.gov.rw/school/`, also
-inside Education Mapping's frame), a page that needs a session goes through the portal's OAuth sign-in
-(`oauth2/authorize`, authorization code with PKCE) for the dashboard's application item in the portal (client ID
-`zCxgnSvJJTL8iCD1`; its redirect URLs list `https://gh.space.gov.rw/school/`). Someone already signed in to the portal
-comes straight back — the first time the portal asks them to Allow the app, unless a portal administrator approved it
-for the organization. The dashboard exchanges the code for a token (`oauth2/token`) and sends it to
-`POST /api/auth/portal-token`; the API asks `community/self` whose it is and opens the same session as a password
-sign-in. Elsewhere (gis.mineduc.gov.rw, development) the form is used. Signing out turns the portal sign-in off for
-that tab until "Continue with my GIS portal sign-in" on the sign-in page. Dashboard settings: `VITE_PORTAL_URL`,
-`VITE_PORTAL_CLIENT_ID` (defaults above). (`oauth2/platformSelf`, which would skip the redirect, refuses the app:
-OAUTH_0068 "Invalid client_id".)
+**Single sign-on.** The dashboard has no sign-in form: a page that needs a session goes through the portal's OAuth
+sign-in (`oauth2/authorize`, implicit grant) for the dashboard's application item in the portal (client ID
+`zCxgnSvJJTL8iCD1`; its redirect URLs must list the site's base on every host, e.g. `https://gh.space.gov.rw/school/`).
+Someone already signed in to the portal comes straight back — the first time the portal asks them to Allow the app,
+unless a portal administrator approved it for the organization. The portal returns a token in the address; the
+dashboard sends it to `POST /api/auth/portal-token`; the API asks `community/self` whose it is and opens the session.
+Signing out ends the session and the portal's (`oauth2/signout`). Dashboard settings: `VITE_PORTAL_URL`,
+`VITE_PORTAL_CLIENT_ID` (defaults above). `POST /api/auth/login` (username and password) still works for scripts and
+tests. (`oauth2/platformSelf`, which would skip the redirect, refuses the app: OAUTH_0068 "Invalid client_id".)
 
 The API must reach the portal over HTTPS; when it cannot, sign-in answers 503. Signing in sets an HttpOnly cookie
 (`sp_session`, SameSite=Lax, Secure over HTTPS) holding a random token; the database keeps only its SHA-256
@@ -83,13 +81,13 @@ host localhost, port 5433). For another database copy `.env.example` to `.env`.
 | GET | `/api/auth/me` | the signed-in user (401 when not signed in) |
 | GET | `/api/meta` | levels, grades, capacity, source, data-quality counts, school years (`actualYears`, `baseYear`, `projectionYears`), live `sources` |
 | GET | `/api/meta`, `/api/school-levels`, `/api/grades`, `/api/combos` `?year=` | a published school year (default: the newest) |
-| GET | `/api/school-levels` | 2026, one record per school × level |
-| GET | `/api/grades` | 2026, one row per school × grade |
+| GET | `/api/school-levels` | 2026, one record per school × level; `t` = its teachers (null = no teacher data); `?capacity=` (20-100): at that many students per classroom |
+| GET | `/api/grades` | 2026, one row per school × grade; `?capacity=` as above |
 | GET | `/api/combos` | 2026, students and class groups per school × grade × combination |
 | GET | `/api/boundaries/{country,districts,sectors}` | GeoJSON outlines (PostGIS) |
-| GET | `/api/projection/config` | years, levels, how new students enter, the default intake plan |
+| GET | `/api/projection/config` | years, levels, how new students enter, the default intake plan, the repetition and dropout `rates` |
 | GET | `/api/projection/default` | the projection with the default (catchment) plan |
-| POST | `/api/projection/run` | the projection for `{"intake": {"N1": {"Gasabo": [2027, 2028, 2029, 2030], …}}, "schools": [planned new schools]}`; a planned school is `{"name", "latitude", "longitude", "levels": {"PRI": 12}, "opening_year", "walking_km"}` (one level, or NUR + PRI) and appears in the rows as code -1, -2 …, described in `planned` |
+| POST | `/api/projection/run` | the projection for `{"intake": {"N1": {"Gasabo": [2027, 2028, 2029, 2030], …}}, "schools": [planned new schools]}`; a planned school is `{"name", "latitude", "longitude", "levels": {"PRI": 12}, "opening_year", "walking_km"}` (one level, or NUR + PRI) and appears in the rows as code -1, -2 …, described in `planned` (with `ring`, the schools within walking distance on the network, `area`, `unreachable`, `snap_km`, `on_main_network`; 422 when no walking network is published). What-if fields, never saved: `"capacity"` (students per classroom, every level, 20-100, default 46), `"repetition"`, `"dropout"` (default true) |
 | GET / POST | `/api/scenarios` | saved intake plans: list (any user) / save a new one (admins) |
 | GET / PUT / DELETE | `/api/scenarios/{id}` | open (any user) / update / delete (admins) a saved plan |
 | GET / POST | `/api/school-plans` | saved plans of new schools: list (any user) / save a new one (admins; the summary of what it changes is stored with it) |
@@ -108,13 +106,18 @@ host localhost, port 5433). For another database copy `.env.example` to `.env`.
 
 ## Updating the data
 
-In the admin portal (Data → Upload): school data (one school year), the catchment file, or NISR district totals.
+In the admin portal (Data → Upload): school data (one school year), the catchment file, NISR district totals, the
+MINEDUC repetition and dropout rates (the workbook with its two sheets; the projection needs them, so they are
+replaced, never withdrawn), the MINEDUC teachers file (one school year) or the walking network (an OpenStreetMap
+`.osm.pbf` of up to 200 MB, for planned schools' walking distance; replaced, never withdrawn; kept as a routing file in
+`UPLOAD_DIR`, with no rows in the database. Without one only planned schools stop working).
 The file is checked (errors block publishing, warnings are listed with the rows concerned); Publish replaces the live
 data in one transaction and reloads the API. Every import is kept (`UPLOAD_DIR`, default `../data-uploads`) and can be
 published again; a school year or the NISR figures can be withdrawn. The newest published school year is the base of
 the projection (the four years after it); saved plans made for an older base year are archived and can be copied.
 From the command line, `python -m etl.load_version2` loads `data-sources/` through the same checks (files already
-live are skipped).
+live are skipped, and so is a kind whose live data came from another file, such as an upload in the admin portal:
+`--replace` publishes over it).
 
 Responses are prepared once and sent gzipped. The data is read from the database at startup (≈10 s) and kept in
 memory; a projection for a new plan takes ≈2 s and is cached (16 plans by default, `PROJECTION_CACHE_SIZE`).

@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 from ..db import get_session
 from ..schemas import ProjectionRequest
 from ..services.auth import current_user
-from ..services.store import store
+from ..services.store import Assumptions, store
 from .common import complete_intake, complete_schools, json_payload, require_data
 
 router = APIRouter(prefix="/projection", tags=["projection"], dependencies=[Depends(current_user), Depends(require_data)])
@@ -17,7 +17,7 @@ router = APIRouter(prefix="/projection", tags=["projection"], dependencies=[Depe
 
 @router.get("/config", summary="Years, levels, grades, how new students enter, the default intake plan")
 def config(request: Request) -> Response:
-    return json_payload(request, store.payload("projection-config"))
+    return json_payload(request, store.payload("projection-config"), max_age=0)  # says whether a walking network is live
 
 
 @router.get("/default", summary="The projection with the default (catchment) intake plan")
@@ -30,5 +30,6 @@ async def run(body: ProjectionRequest, request: Request, session: Session = Depe
     intake = complete_intake(body.intake)
     planned = complete_schools(body.schools, session)
     is_default = intake == store.snapshot.default_intake  # same cache entry as GET /projection/default
-    payload = await run_in_threadpool(store.projection, None if is_default else intake, planned)
+    assumptions = Assumptions(body.capacity, body.repetition, body.dropout)
+    payload = await run_in_threadpool(store.projection, None if is_default else intake, planned, assumptions)
     return json_payload(request, payload, max_age=0)

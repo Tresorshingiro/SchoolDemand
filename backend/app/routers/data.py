@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import Response
 
 from ..services.auth import current_user
@@ -12,11 +12,12 @@ from .common import json_payload, require_data
 
 router = APIRouter(tags=["data"], dependencies=[Depends(current_user), Depends(require_data)])
 YEAR = "a published school year (default: the newest)"
+CAPACITY = Query(None, ge=20, le=100, description="students per classroom, every level (default: the published norm)")
 
 
-def _payload(request: Request, name: str, year: int | None) -> Response:
+def _payload(request: Request, name: str, year: int | None, capacity: int | None = None) -> Response:
     try:
-        return json_payload(request, store.year_payload(name, year))
+        return json_payload(request, store.year_payload(name, year, capacity))
     except KeyError as e:
         raise HTTPException(404, str(e.args[0])) from None
 
@@ -27,13 +28,13 @@ def meta(request: Request, year: int | None = None) -> Response:
 
 
 @router.get("/school-levels", summary=f"One record per school x level, {YEAR}")
-def school_levels(request: Request, year: int | None = None) -> Response:
-    return _payload(request, "school-levels", year)
+def school_levels(request: Request, year: int | None = None, capacity: int | None = CAPACITY) -> Response:
+    return _payload(request, "school-levels", year, capacity)
 
 
 @router.get("/grades", summary=f"One row per school x grade, {YEAR}")
-def grades(request: Request, year: int | None = None) -> Response:
-    return _payload(request, "grades", year)
+def grades(request: Request, year: int | None = None, capacity: int | None = CAPACITY) -> Response:
+    return _payload(request, "grades", year, capacity)
 
 
 @router.get("/combos", summary=f"Students and class groups per school x grade x combination, {YEAR}")

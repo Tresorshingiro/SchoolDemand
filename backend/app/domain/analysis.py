@@ -143,7 +143,7 @@ def _school_info(df: pd.DataFrame) -> pd.DataFrame:
     return info
 
 
-def _aggregate(df: pd.DataFrame, keys: list[str]) -> pd.DataFrame:
+def _aggregate(df: pd.DataFrame, keys: list[str], capacity: int | None = None) -> pd.DataFrame:
     out = (
         df.groupby(keys)
         .agg(
@@ -155,21 +155,21 @@ def _aggregate(df: pd.DataFrame, keys: list[str]) -> pd.DataFrame:
     )
     out["double_shift"] = out["total_classrooms"] - out["physical_rooms"]
     out["available"] = out["physical_rooms"]
-    out["capacity"] = out["level"].map(CAPACITY)
+    out["capacity"] = capacity if capacity else out["level"].map(CAPACITY)
     out["required"] = [math.ceil(s / c) for s, c in zip(out["total_students"], out["capacity"])]
-    need = room_need(df[df["level"].isin(FULL_DAY)], keys)
+    need = room_need(df[df["level"].isin(FULL_DAY)], keys, capacity)
     out = out.merge(need, on=keys, how="left")
     out["required"] = out["need"].where(out["level"].isin(FULL_DAY), out["required"]).astype(int)
     out["gap"] = out["available"] - out["required"]
     return out.drop(columns=["physical_rooms", "need"])
 
 
-def room_need(df: pd.DataFrame, keys: list[str]) -> pd.DataFrame:
+def room_need(df: pd.DataFrame, keys: list[str], capacity: int | None = None) -> pd.DataFrame:
     """Rooms needed by full-day levels, per `keys` (column "need"): SUM over grade x combination of
-    MAX(class groups, CEILING(students / capacity))."""
+    MAX(class groups, CEILING(students / capacity)). `capacity` None = each level's own."""
     by = list(dict.fromkeys([*keys, "grade", "combination"]))
     t = df.groupby(by).agg(st=(STUDENTS, "sum"), g=("room_key", "size")).reset_index()
-    t["need"] = [max(g, math.ceil(s / CAPACITY[lvl])) for g, s, lvl in zip(t["g"], t["st"], t["level"])]
+    t["need"] = [max(g, math.ceil(s / (capacity or CAPACITY[lvl]))) for g, s, lvl in zip(t["g"], t["st"], t["level"])]
     return t.groupby(keys, as_index=False)["need"].sum()
 
 
@@ -183,16 +183,16 @@ def _sort(df: pd.DataFrame, with_grade: bool) -> pd.DataFrame:
     return df.sort_values(cols, na_position="last").drop(columns=[c for c in ("_lvl", "_grd") if c in df])
 
 
-def grade_table(df: pd.DataFrame) -> pd.DataFrame:
-    """Section 3a — one row per school x grade."""
-    t = _aggregate(df, ["school_code", "level", "grade"])
+def grade_table(df: pd.DataFrame, capacity: int | None = None) -> pd.DataFrame:
+    """Section 3a — one row per school x grade (`capacity` students per room; None = each level's own)."""
+    t = _aggregate(df, ["school_code", "level", "grade"], capacity)
     t = t.merge(_school_info(df), on="school_code", how="left")
     return _sort(t, with_grade=True).reset_index(drop=True)
 
 
-def school_table(df: pd.DataFrame) -> pd.DataFrame:
-    """Section 3b — one row per school x level (grades rolled up)."""
-    t = _aggregate(df, ["school_code", "level"])
+def school_table(df: pd.DataFrame, capacity: int | None = None) -> pd.DataFrame:
+    """Section 3b — one row per school x level (grades rolled up; `capacity` as in grade_table)."""
+    t = _aggregate(df, ["school_code", "level"], capacity)
     t = t.merge(_school_info(df), on="school_code", how="left")
     return _sort(t, with_grade=False).reset_index(drop=True)
 

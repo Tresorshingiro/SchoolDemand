@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from io import BytesIO
 
+import pandas as pd
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse, Response
 from sqlalchemy import func, select
@@ -53,13 +54,15 @@ def sources(session: Session = Depends(get_session)) -> list[dict]:
     live = session.scalars(select(M.ImportRun).where(M.ImportRun.is_live)
                            .order_by(M.ImportRun.academic_year.desc())).all()
     return [{"kind": kind, "label": lab, "live": [_out(r, names) for r in live if r.kind == kind],
-             "connector": "not set up" if kind == "school_data" else None} for kind, (_, lab) in S.KINDS.items()]
+             "connector": "not set up" if kind == "school_data" else None,
+             "missing_file": kind == S.NETWORK and any(r.kind == kind and not S.network_usable(r) for r in live)}
+            for kind, (_, lab) in S.KINDS.items()]
 
 
 @router.post("/uploads", status_code=202, response_model=ImportDetailOut, summary="Upload a file; it is checked next")
 async def upload(kind: str = Form(...), academic_year: int | None = Form(None), file: UploadFile = File(...),
                  session: Session = Depends(get_session), admin: M.User = Depends(require_admin)):
-    content = await file.read(S.MAX_BYTES + 1)
+    content = await file.read(S.max_bytes(kind) + 1)
     run = S.create_upload(session, kind=kind, file_name=file.filename or "upload", content=content,
                           academic_year=academic_year, user=admin)
     worker.submit(S.run_check, run.id)
@@ -120,7 +123,7 @@ def publish(run_id: int, session: Session = Depends(get_session), admin: M.User 
 
 
 @router.post("/imports/{run_id}/withdraw", status_code=202, response_model=ImportDetailOut,
-             summary="Remove live data (a school year when another stays, or the NISR figures)")
+             summary="Remove live data (a school year when another stays, a year's teachers, or the NISR figures)")
 def withdraw(run_id: int, session: Session = Depends(get_session), admin: M.User = Depends(require_admin)):
     run = _get(session, run_id)
     S.check_withdraw(session, run)
@@ -158,6 +161,12 @@ def template(kind: str, session: Session = Depends(get_session)) -> Response:
         raise HTTPException(404, f"Unknown kind of data {kind!r}.")
     years = R.school_years(session)
     buf = BytesIO()
-    TEMPLATES[kind](P.Horizon(years[-1]) if years else P.DEFAULT_HORIZON).to_excel(buf, index=False)
+    t = TEMPLATES[kind](P.Horizon(years[-1]) if years else P.DEFAULT_HORIZON)
+    if isinstance(t, dict):  # several sheets, written as laid out
+        with pd.ExcelWriter(buf) as w:
+            for name, sheet in t.items():
+                sheet.to_excel(w, sheet_name=name, index=False, header=False)
+    else:
+        t.to_excel(buf, index=False)
     return Response(buf.getvalue(), media_type=XLSX,
                     headers={"Content-Disposition": f'attachment; filename="template_{kind}.xlsx"'})

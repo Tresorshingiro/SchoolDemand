@@ -16,7 +16,8 @@ from tests import samples
 def test_existing_data_is_live():
     with SessionLocal() as s:
         live = s.scalars(select(M.ImportRun).where(M.ImportRun.is_live)).all()
-        assert sorted((r.kind, r.academic_year or 0) for r in live) == [("catchment", 0), ("school_data", 2026)]
+        assert sorted((r.kind, r.academic_year or 0) for r in live if r.kind != "walking_network") == [
+            ("catchment", 0), ("flow_rates", 0), ("school_data", 2026), ("teachers", 2026)]
         assert all(r.status == "published" for r in live)
         assert s.scalar(select(func.count()).select_from(M.Classroom).where(M.Classroom.academic_year_id.is_(None))) == 0
         assert s.scalar(select(func.count()).select_from(M.DistrictPopulation)) == 0
@@ -27,7 +28,7 @@ def test_meta_lists_the_school_years(client):
     meta = client.get("/api/meta").json()
     assert meta["actualYears"] == [2026] and meta["baseYear"] == 2026
     assert meta["projectionYears"] == [2027, 2028, 2029, 2030]
-    assert {s["kind"] for s in meta["sources"]} == {"school_data", "catchment"}
+    assert {s["kind"] for s in meta["sources"]} - {"walking_network"} == {"school_data", "catchment", "flow_rates", "teachers"}
 
 
 def test_year_parameter(client):
@@ -149,7 +150,7 @@ def test_data_routes_are_admin_only(viewer):
 
 def test_sources_and_templates(client):
     kinds = {k["kind"]: k for k in client.get(f"{DATA}/sources").json()}
-    assert set(kinds) == {"school_data", "catchment", "nisr_population"}
+    assert set(kinds) == {"school_data", "catchment", "nisr_population", "flow_rates", "teachers", "walking_network"}
     assert [r["academic_year"] for r in kinds["school_data"]["live"]] == [2026] and kinds["nisr_population"]["live"] == []
     assert kinds["school_data"]["connector"] == "not set up"
     r = client.get(f"{DATA}/templates/catchment")
@@ -184,6 +185,63 @@ def test_nisr_publish_and_withdraw(client):
     finally:
         assert act(client, run["id"], "withdraw")["status"] == "withdrawn"
     assert client.get("/api/projection/config").json()["population"]["N1"] == before
+
+
+def test_rates_cannot_be_withdrawn_and_republish(client):
+    live = next(k for k in client.get(f"{DATA}/sources").json() if k["kind"] == "flow_rates")["live"][0]
+    r = client.post(f"{DATA}/imports/{live['id']}/withdraw")
+    assert r.status_code == 409 and "rates" in r.json()["detail"]
+    with SessionLocal() as s:
+        from app.services import repository as R  # noqa: PLC0415
+        assert R.read_rates(s).school_year == "2023/24"
+    assert client.get("/api/admin/data/templates/flow_rates").status_code == 200
+
+
+def test_teachers_withdraw_and_publish_again(client):
+    from app.services import repository as R  # noqa: PLC0415
+    live = next(k for k in client.get(f"{DATA}/sources").json() if k["kind"] == "teachers")["live"][0]
+    assert live["academic_year"] == 2026
+    with SessionLocal() as s:
+        assert len(R.read_teachers(s, 2026)) > 9000
+    try:
+        assert act(client, live["id"], "withdraw")["status"] == "withdrawn"
+        with SessionLocal() as s:
+            assert R.read_teachers(s, 2026) is None
+    finally:
+        assert act(client, live["id"], "publish")["status"] == "published"
+    with SessionLocal() as s:
+        assert len(R.read_teachers(s, 2026)) > 9000
+
+
+def test_teachers_need_a_school_year():
+    with SessionLocal() as s, pytest.raises(HTTPException) as e:
+        S.create_upload(s, kind="teachers", file_name="pytest.xlsx", content=b"x", academic_year=None, user=None)
+    assert e.value.detail == "Choose the school year of this file."
+    with SessionLocal() as s, pytest.raises(HTTPException) as e:
+        S.create_upload(s, kind="flow_rates", file_name="pytest.csv", content=b"x", academic_year=None, user=None)
+    assert e.value.status_code == 422 and ".xlsx" in e.value.detail
+
+
+def test_the_load_job_loads_teachers_for_the_newest_school_year():
+    from etl import load_version2 as L  # noqa: PLC0415
+    with SessionLocal() as s:
+        from app.services import repository as R  # noqa: PLC0415
+        assert L.teachers_year() == max(R.school_years(s))
+
+
+def test_the_load_job_keeps_live_data_from_another_file(monkeypatch):
+    """Data published from another file (an upload in the admin portal) is not replaced by the files of data-sources/."""
+    from etl import load_version2 as L  # noqa: PLC0415
+    from app.domain import projection as P  # noqa: PLC0415
+    published = []
+    monkeypatch.setattr(S, "run_publish", lambda *a, **k: published.append(a))
+    with SessionLocal() as s:
+        live = S.live(s, "catchment")
+    assert live.file_name != P.CATCHMENT_XLSX.name   # the dev database: the catchment came from the admin portal
+    message = L.load_file("catchment", P.CATCHMENT_XLSX)
+    assert published == [] and "skipped" in message and live.file_name in message
+    with SessionLocal() as s:
+        assert S.live(s, "catchment").id == live.id
 
 
 def test_catchment_publish_and_republish_the_previous(client):

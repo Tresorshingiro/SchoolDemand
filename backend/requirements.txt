@@ -7,5 +7,7 @@ geoalchemy2>=0.15
 pydantic-settings>=2.4
 pandas>=2.2
 numpy>=1.26
+scipy>=1.13
+osmium>=4.0
 openpyxl>=3.1
 python-multipart>=0.0.9

@@ -25,40 +25,51 @@ New students (year y = base + 1 ... base + 4; 2027 ... 2030 today)
   (Chachement area.xlsx, Pop2027 ... Pop2030: NISR age 3 shared to schools by GIS).
   A school without a figure for a year keeps its last known one (its 2026 N1 when it
   has none). The file repeats 2029 for 2030 and is used as given. Every child is
-  assumed to enter; repetition is not modelled.
+  assumed to enter.
   The intake plan (editable, district x year) defaults to the district totals of these
   figures; a district's plan is shared to its schools in proportion to their catchment:
       new N1(school) = ROUND(plan x school catchment / district catchment)   (half up)
-* P1 = the N3 of y-1 (children who did not attend pre-primary are not added, as the
-  user decided). A school offering primary takes its own N3; the N3 of schools without
-  primary (stand-alone nurseries) is pooled by sector and shared to the sector's primary
-  schools by their 2026 P1 (the district when a sector has no P1 to receive it).
-* S1 = every P6 pupil of the district in y-1 (all of P6 moves on).
-* S4 / L3 / Y1 = every S3 student of the district in y-1, split by the district's
+* P1 = the promoted N3 of y-1 (children who did not attend pre-primary are not added, as
+  the user decided). A school offering primary takes its own promoted N3; those of schools
+  without primary (stand-alone nurseries) are pooled by sector and shared to the sector's
+  primary schools by their 2026 P1 (the district when a sector has no P1 to receive it).
+* S1 = the promoted P6 pupils of the district in y-1.
+* S4 / L3 / Y1 = the promoted S3 students of the district in y-1, split by the district's
   2026 mix of S4 / L3 / Y1 students.
 * A district (or sector) pool of new students of a grade is shared to its schools in
   proportion to each school's students of that grade in 2026:
       new(school) = ROUND(pool x school share)          (half up)
-  New students are formed into class groups at the school's 2026 average group size
-  for that grade: CEILING(new / group size).
+  An entry grade holds its new students and its own repeaters.
 
-Cohorts (per school)
---------------------
-Inside a level students and class groups move up one grade a year; the last
-grade leaves the level (N3 and P6 and S3 and the final grades leave the school's
-count — P6 and S3 re-enter secondary through the district pools above).
+Repetition and dropout (rates.py)
+---------------------------------
+Every projected year, at every level, each school's district rates (the latest school year
+of the MINEDUC file, Average; Rwanda for a school without a district) apply to every grade
+of y-1 with S students (a what-if run can switch each off: rates.switched):
+    repeaters = ROUND(S x repetition)    dropouts = ROUND(S x dropout)   (half up; dropouts
+    promoted  = S - repeaters - dropouts                                   capped so promoted >= 0)
+Repeaters stay in their grade, dropouts leave school, the promoted move up one grade; the
+last grade's promoted leave the level (N3, P6 and S3 feed the next level as above).
+
+Class groups (per school)
+-------------------------
+Class groups = CEILING(students / group size) for every projected grade. A cohort keeps
+its group size as it moves up: the school's 2026 students per group of its grade, or for a
+cohort that entered later the size its groups were formed at (the school's 2026 size of
+the entry grade; the level capacity when the school had no groups in it). With no
+repetition or dropout this moves the 2026 groups up exactly, as before.
 
 Combinations (Upper Secondary, TVET, Professional Education)
 ------------------------------------------------------------
 Class groups there follow a subject combination or trade (MEG, Math and Science
-Stream Two, SOD, ACC ...). The projection also splits each grade by combination —
-a breakdown only, the grade figures above are unchanged:
-* Students and class groups keep their combination as they move up (S4 MEG -> S5 MEG).
+Stream Two, SOD, ACC ...). The projection follows each combination, and a grade's
+students and class groups are the sum of its combinations':
+* Repeaters stay in their grade and combination, the promoted move up in their
+  combination (S4 MEG -> S5 MEG), with its group size.
 * The new S4 / L3 / Y1 students of a school are split between combinations in
-  proportion to the school's 2026 students of each combination in that grade, and
-  its new class groups in proportion to its 2026 class groups of each combination
-  (whole numbers, largest remainder, ties to the combination listed first), so the
-  combinations always add up to the grade.
+  proportion to the school's 2026 students of each combination in that grade, and the
+  entry grade's class groups in proportion to its 2026 class groups of each combination
+  (whole numbers, largest remainder, ties to the combination listed first).
 
 Classrooms (per school and level, every year)
 ---------------------------------------------
@@ -83,6 +94,8 @@ Classrooms (per school and level, every year)
   Rooms are shared between grades in proportion to the rooms each grade needs (every grade gets
   what it needs when the school has enough). Double Shift = MAX(0, class groups - rooms) there
   means class groups without a room; they are also in the gap through Required.
+* A what-if run can replace capacity with one number for every level (`capacity`). It changes Required, the room
+  sharing and the gap, never the class groups of existing schools.
 """
 from __future__ import annotations
 
@@ -96,6 +109,7 @@ import numpy as np
 import pandas as pd
 
 from . import analysis as A
+from . import rates as RT
 
 CATCHMENT_XLSX = A.DATA_DIR / "Chachement area.xlsx"  # children aged 3 per pre-primary school catchment, 2027-2030
 BASE_YEAR = 2026
@@ -277,6 +291,25 @@ def share_rooms(rooms: np.ndarray, groups: np.ndarray, required: np.ndarray) -> 
     return assigned + np.where(crowded[:, None], 0, extra)
 
 
+def _flow(s: np.ndarray, rep_rate: np.ndarray, drop_rate: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """One year of repetition and dropout for the grades of one level (n x grades, or n x grades x combinations):
+    (students next year before new entrants, promoted students per grade). Repeaters stay in their grade, dropouts
+    leave, the promoted move up one grade; the last grade's promoted leave the level."""
+    r = rep_rate.reshape((-1,) + (1,) * (s.ndim - 1))
+    d = drop_rate.reshape(r.shape)
+    rep = round_half_up(s * r)
+    drop = np.minimum(round_half_up(s * d), s - rep)
+    prom = s - rep - drop
+    stays = rep.copy()
+    stays[:, 1:] += prom[:, :-1]
+    return stays, prom
+
+
+def _groups(students: np.ndarray, size: np.ndarray) -> np.ndarray:
+    """CEILING(students / size) as whole class groups (258 / (258 / 7) is 7, not 8, despite floating point)."""
+    return np.ceil(students / size - 1e-9).astype(int)
+
+
 def share_by_need(rooms: np.ndarray, need: np.ndarray) -> np.ndarray:
     """Full-day levels: each grade gets the rooms it needs, or a proportional share when the school has too few."""
     enough = rooms >= need.sum(axis=1)
@@ -297,12 +330,16 @@ class YearState:
 
 def project(roster: pd.DataFrame, intake: dict[str, pd.DataFrame] | None = None, *,
             catchment: pd.DataFrame | None = None, base: Base | None = None, horizon: Horizon = DEFAULT_HORIZON,
-            after_intake: Callable[[YearState], None] | None = None,
+            after_intake: Callable[[YearState], None] | None = None, rates: RT.FlowRates | None = None,
+            capacity: int | None = None, stream_fallback: np.ndarray | None = None,
             ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """Run the projection. `intake` = {"N1": district x year}; default: the catchment totals (default_intake).
-    `catchment` (school_code x horizon.future, see fill_catchment), `horizon` the base year and projection years and `base` (base_schools) default to the files / the
-    roster; the API passes them in, prepared once from the database. `after_intake` is called for every projected
-    year once its new entrants are placed (planned new schools take their students there: new_schools.py).
+    `catchment` (school_code x horizon.future, see fill_catchment), `horizon` the base year and projection years,
+    `base` (base_schools) and `rates` (repetition and dropout, rates.py) default to the files / the roster; the API
+    passes them in, prepared once from the database. `after_intake` is called for every projected year once its new
+    entrants are placed (planned new schools take their students there: new_schools.py). `capacity` = students per
+    room for every level (None = each level's own). `stream_fallback` (n x GRADES) = the group size of a grade without
+    base-year groups (default: the level's own capacity, whatever `capacity` is).
 
     Returns (info, schools, grades, combos):
     info    one row per school (code, name, district, sector, coordinates)
@@ -320,9 +357,6 @@ def project(roster: pd.DataFrame, intake: dict[str, pd.DataFrame] | None = None,
     d_2026 = district_totals(info, b.students)
     share = {g: np.divide(b.students[:, gi[g]], district.map(d_2026[g]).to_numpy(),
                           out=np.zeros(n), where=b.students[:, gi[g]] > 0) for g in ENTRY}
-    size = {g: np.divide(b.students[:, gi[g]], b.groups[:, gi[g]],
-                         out=np.full(n, float(CAPACITY[A.GRADE_TO_LEVEL[g]])), where=b.groups[:, gi[g]] > 0)
-            for g in ENTRY}
     mix = {}
     for _, targets in FEEDS:
         entrants = d_2026[targets].sum(axis=1)
@@ -345,19 +379,34 @@ def project(roster: pd.DataFrame, intake: dict[str, pd.DataFrame] | None = None,
     sector_share = {dst: pool_share(dst, sector) for _, dst in SCHOOL_FEEDS}
     district_share = {dst: pool_share(dst, district.to_numpy()) for _, dst in SCHOOL_FEEDS}
 
+    # Repetition and dropout of each school's district (rates.py)
+    rates = rates if rates is not None else RT.load_rates()
+    rep_rate, drop_rate = RT.school_rates(rates, district)
+    # Class groups of a projected grade: CEILING(students / group size). A cohort keeps the group size it had in the
+    # base year (of its combination for combination levels) as it moves up; entry grades use the school's base-year
+    # size of the grade; a grade (combination) without groups then, the grade's size, else the level capacity
+    fallback = (stream_fallback if stream_fallback is not None
+                else np.array([float(CAPACITY[A.GRADE_TO_LEVEL[g]]) for g in GRADES]))
+    group_size = np.where((b.groups > 0) & (b.students > 0), b.students / np.maximum(b.groups, 1), fallback)
+    level_grades = dict(LEVELS)
+    combo_size = {}
+    for label in COMBO_LEVELS:
+        cs, cg = b.combo_students[label], b.combo_groups[label]
+        grade_size = group_size[:, [gi[g] for g in level_grades[label]]][:, :, None]
+        combo_size[label] = np.where((cg > 0) & (cs > 0), cs / np.maximum(cg, 1), grade_size)
+
+    size, c_size = group_size, dict(combo_size)  # the group size of each grade's cohort this year
     students, groups = b.students.copy(), b.groups.copy()
     c_students = {k: v.copy() for k, v in b.combo_students.items()}
     c_groups = {k: v.copy() for k, v in b.combo_groups.items()}
-    level_grades = dict(LEVELS)
     school_frames, grade_frames, combo_frames = [], [], []
     for year in horizon.years:
         if year > horizon.base:
-            prev_s, prev_g = students, groups
-            students, groups = np.zeros_like(prev_s), np.zeros_like(prev_g)
+            prev_s = students
+            students, promoted = np.zeros_like(prev_s), np.zeros_like(prev_s)
             for _, grades in LEVELS:
-                for k in range(1, len(grades)):
-                    students[:, gi[grades[k]]] = prev_s[:, gi[grades[k - 1]]]
-                    groups[:, gi[grades[k]]] = prev_g[:, gi[grades[k - 1]]]
+                cols = [gi[g] for g in grades]
+                students[:, cols], promoted[:, cols] = _flow(prev_s[:, cols], rep_rate, drop_rate)
             new = {}
             yi = horizon.years.index(year) - 1
             for g in INTAKES:
@@ -366,7 +415,7 @@ def project(roster: pd.DataFrame, intake: dict[str, pd.DataFrame] | None = None,
                 new[g] = round_half_up(np.divide(plan * catch[:, yi], catch_total[:, yi],
                                                  out=np.zeros(n), where=catch_total[:, yi] > 0))
             for src, dst in SCHOOL_FEEDS:
-                leavers = prev_s[:, gi[src]]
+                leavers = promoted[:, gi[src]]
                 away = np.where(offers[dst], 0, leavers).astype(float)
                 sec_pool = pd.Series(away).groupby(sector).transform("sum").to_numpy()
                 # sectors with leavers but no school to receive them: their leavers go to the district
@@ -375,19 +424,39 @@ def project(roster: pd.DataFrame, intake: dict[str, pd.DataFrame] | None = None,
                 new[dst] = (np.where(offers[dst], leavers, 0) + round_half_up(sec_pool * sector_share[dst])
                             + round_half_up(dis_pool * district_share[dst]))
             for src, targets in FEEDS:
-                pool = district.map(pd.Series(prev_s[:, gi[src]]).groupby(district.to_numpy()).sum()).to_numpy()
+                pool = district.map(pd.Series(promoted[:, gi[src]]).groupby(district.to_numpy()).sum()).to_numpy()
                 for t in targets:
                     new[t] = round_half_up(pool * mix[t] * share[t])
-            for g, v in new.items():
-                students[:, gi[g]] = v
-                groups[:, gi[g]] = np.ceil(v / size[g]).astype(int)
-            for label in COMBO_LEVELS:  # combinations move up with their cohort; new entrants split by the 2026 mix
-                e = gi[level_grades[label][0]]
-                prev_cs, prev_cg = c_students[label], c_groups[label]
-                c_students[label], c_groups[label] = np.zeros_like(prev_cs), np.zeros_like(prev_cg)
-                c_students[label][:, 1:], c_groups[label][:, 1:] = prev_cs[:, :-1], prev_cg[:, :-1]
-                c_students[label][:, 0] = _largest_remainder(students[:, e], b.combo_students[label][:, 0])
-                c_groups[label][:, 0] = _largest_remainder(groups[:, e], b.combo_groups[label][:, 0])
+            for g, v in new.items():  # the entry grade keeps its repeaters
+                students[:, gi[g]] += v
+            prev_size, size = size, group_size.copy()
+            for _, grades in LEVELS:  # each cohort keeps its group size as it moves up
+                cols = [gi[g] for g in grades]
+                size[:, cols[1:]] = prev_size[:, cols[:-1]]
+            groups = _groups(students, size)
+            entry = [gi[g] for g in ENTRY]  # an entering cohort carries the size its groups were formed at
+            size[:, entry] = np.where(groups[:, entry] > 0, students[:, entry] / np.maximum(groups[:, entry], 1),
+                                      size[:, entry])
+            for label in COMBO_LEVELS:  # the same flow per combination; new entrants split by the base-year mix
+                cols = [gi[g] for g in level_grades[label]]
+                cs, _ = _flow(c_students[label], rep_rate, drop_rate)
+                cs[:, 0] += _largest_remainder(new[level_grades[label][0]], b.combo_students[label][:, 0])
+                prev_c, c_size[label] = c_size[label], combo_size[label].copy()
+                c_size[label][:, 1:] = prev_c[:, :-1]
+                cg = np.zeros_like(c_groups[label])
+                cg[:, 1:] = _groups(cs[:, 1:], c_size[label][:, 1:])
+                # the entry grade's groups, as for the grade, split by the base-year groups of each combination
+                # the entry grade's groups count the students its combinations hold (their repeaters are rounded
+                # per combination), split by the base-year groups of each combination
+                cs0 = cs[:, 0]
+                cg0 = _largest_remainder(_groups(cs0.sum(axis=1), group_size[:, cols[0]]), b.combo_groups[label][:, 0])
+                # where the two splits disagree (small intakes, planned schools): no group without students, and
+                # students always in a group
+                cg0 = np.where(cs0 == 0, 0, np.where(cg0 == 0, _groups(cs0, c_size[label][:, 0]), cg0))
+                cg[:, 0] = cg0
+                c_size[label][:, 0] = np.where(cg0 > 0, cs0 / np.maximum(cg0, 1), c_size[label][:, 0])
+                c_students[label], c_groups[label] = cs, cg
+                students[:, cols], groups[:, cols] = cs.sum(axis=2), cg.sum(axis=2)
             if after_intake is not None:
                 after_intake(YearState(year, students, groups, c_students, c_groups))
 
@@ -407,7 +476,7 @@ def project(roster: pd.DataFrame, intake: dict[str, pd.DataFrame] | None = None,
         for li, (label, grades) in enumerate(LEVELS):
             has = b.rooms[:, li] > 0
             cols = [gi[g] for g in grades]
-            cap = CAPACITY[label]
+            cap = capacity or CAPACITY[label]
             st, gr, rooms = students[has][:, cols], groups[has][:, cols], b.rooms[has, li]
             if label in A.FULL_DAY:  # every class group needs a room; combinations never share
                 if label in c_students:

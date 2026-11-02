@@ -1,6 +1,8 @@
 """Planned new schools through the API (needs the database, like test_api.py)."""
 import pytest
 
+pytestmark = pytest.mark.usefixtures("walking_grid")
+
 GATENGA = {"latitude": -1.998765, "longitude": 30.082429}   # inside Gatenga sector, Kicukiro
 
 

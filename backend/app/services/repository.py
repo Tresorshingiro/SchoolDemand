@@ -1,13 +1,17 @@
 """Read the analysis inputs from the database, in the same shape as the source files."""
 from __future__ import annotations
 
+from pathlib import Path
+
 import pandas as pd
 from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session
 
 from .. import models as M
+from ..config import settings
 from ..domain import analysis as A
 from ..domain import projection as P
+from ..domain import rates as RT
 
 ROSTER_SQL = text(f"""
 SELECT s.mineduc_code::bigint AS school_code, s.name AS school_name, d.name AS district, se.name AS sector,
@@ -30,6 +34,11 @@ def read_roster(session: Session, year: int = P.BASE_YEAR) -> pd.DataFrame:
     the file."""
     df = pd.read_sql(ROSTER_SQL, session.connection(), params={"year": year})
     return A.prepare_roster(df)
+
+
+def network_file(run: M.ImportRun) -> Path:
+    """Where a walking network import's routing file is kept."""
+    return settings.upload_path / f"import-{run.id}.network.npz"
 
 
 def read_catchment_population(session: Session) -> pd.DataFrame:
@@ -65,6 +74,39 @@ def read_nisr(session: Session) -> pd.DataFrame:
         return pd.DataFrame()
     t = pd.DataFrame(rows, columns=["district", "year", "population"])
     return t.pivot_table(index="district", columns="year", values="population", aggfunc="sum").astype(float)
+
+
+def read_rates(session: Session) -> RT.FlowRates | None:
+    """The published repetition and dropout rates of the latest school year (None when none are published)."""
+    rows = session.execute(
+        select(func.coalesce(M.District.name, RT.NATIONAL), M.DistrictFlowRate.school_year, M.DistrictFlowRate.end_year,
+               M.DistrictFlowRate.repetition, M.DistrictFlowRate.dropout)
+        .outerjoin(M.District, M.District.id == M.DistrictFlowRate.district_id)
+    ).all()
+    if not rows:
+        return None
+    long = pd.DataFrame(rows, columns=["district", "school_year", "end_year", "repetition", "dropout"])
+    return RT.latest(long.astype({"repetition": float, "dropout": float}))
+
+
+def read_teachers(session: Session, year: int) -> pd.DataFrame | None:
+    """Teachers of a school year: school_code, level (label), teachers (None when none are published for it)."""
+    rows = session.execute(
+        select(M.School.mineduc_code, M.SchoolLevel.name, M.SchoolTeachers.teachers)
+        .join(M.School, M.School.id == M.SchoolTeachers.school_id)
+        .join(M.SchoolLevel, M.SchoolLevel.id == M.SchoolTeachers.level_id)
+        .join(M.AcademicYear, M.AcademicYear.id == M.SchoolTeachers.academic_year_id)
+        .where(M.AcademicYear.year == year)
+    ).all()
+    if not rows:
+        return None
+    return pd.DataFrame(rows, columns=["school_code", "level", "teachers"]).astype({"school_code": "int64"})
+
+
+def teacher_years(session: Session) -> list[int]:
+    """The school years with published teachers, oldest first."""
+    return sorted(session.scalars(select(M.ImportRun.academic_year).where(
+        M.ImportRun.is_live, M.ImportRun.kind == "teachers")).all())
 
 
 def locate(session: Session, lat: float, lon: float) -> tuple[str, str] | None:

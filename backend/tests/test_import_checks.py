@@ -243,3 +243,80 @@ def test_grade_summary_errors():
     assert roster is None and "classrooms" in [e["code"] for e in rep.errors]
     roster, rep = check_school_data(summary_file().drop(columns=["sector"]), 2026, context())
     assert roster is None and "missing_columns" in [e["code"] for e in rep.errors]
+
+
+# ---------------------------------------------------------------- repetition / dropout rates and teachers
+from app.imports.checks import check_flow_rates, check_teachers  # noqa: E402
+from tests.flow_samples import two_sheets  # noqa: E402
+
+
+def test_flow_rates_ok():
+    parsed, rep = check_flow_rates(two_sheets(), None, context())
+    assert rep.ok, rep.errors
+    assert rep.summary["school_year"] == "2023/24" and set(parsed["end_year"]) == {2023, 2024}
+    assert {w["code"] for w in rep.warnings} == {"missing_districts"}   # Kicukiro, Nyarugenge use Rwanda
+
+
+def test_flow_rates_errors():
+    _, rep = check_flow_rates(two_sheets(gasabo=(0.7, 0.4)), None, context())     # r + d >= 1
+    assert {e["code"] for e in rep.errors} == {"sum"}
+    _, rep = check_flow_rates(two_sheets(gasabo=(1.5, 0.0)), None, context())     # outside 0-1
+    assert "values" in {e["code"] for e in rep.errors}
+    parsed, rep = check_flow_rates(two_sheets(rwanda=False), None, context())
+    assert parsed is None and "no_national" in {e["code"] for e in rep.errors}
+    parsed, rep = check_flow_rates({"Repetition Rate": two_sheets()["Repetition Rate"]}, None, context())
+    assert parsed is None and "structure" in {e["code"] for e in rep.errors}
+
+
+def test_flow_rates_unknown_district_is_a_warning():
+    sheets = two_sheets()
+    for name in sheets:
+        sheets[name].iat[4, 1] = "Gasabbo"
+    parsed, rep = check_flow_rates(sheets, None, context())
+    assert rep.ok and "unknown_districts" in {w["code"] for w in rep.warnings}
+
+
+def test_templates_pass_their_checks(tmp_path):
+    from app.imports.checks import TEMPLATES  # noqa: PLC0415
+    path = tmp_path / "rates.xlsx"
+    with pd.ExcelWriter(path) as w:
+        for name, t in TEMPLATES["flow_rates"](P.Horizon(2026)).items():
+            t.to_excel(w, sheet_name=name, index=False, header=False)
+    parsed, rep = check_flow_rates(read_table(path, all_sheets=True), None, context())
+    assert rep.ok and rep.summary["school_year"] == "2023/24"
+    _, rep = check_teachers(TEMPLATES["teachers"](P.Horizon(2026)), 2026, context())
+    assert rep.ok, rep.errors
+
+
+def test_teachers_ok():
+    raw = pd.DataFrame({"school_code": [110103, 110107, 999999], "school_status": ["PUBLIC"] * 3,
+                        "total_primary_teachers": [3, None, 2], "total_preprimary_teachers": [None, 1, None],
+                        "total_teaching_staff": [3, 2, 2]})
+    parsed, rep = check_teachers(raw, 2026, context())
+    assert rep.ok, rep.errors
+    assert rep.summary == {"schools": 3, "teachers": 6}
+    assert {w["code"] for w in rep.warnings} == {"unknown_schools", "total"}   # 999999; 110107 1 != 2
+
+
+def test_teachers_for_a_year_without_school_data_is_a_warning():
+    raw = pd.DataFrame({"school_code": [110103], "total_primary_teachers": [3]})
+    _, rep = check_teachers(raw, 2027, context())    # live school years: 2026
+    assert rep.ok and "no_school_year" in {w["code"] for w in rep.warnings}
+    _, rep = check_teachers(raw, 2026, context())
+    assert "no_school_year" not in {w["code"] for w in rep.warnings}
+
+
+def test_teachers_errors():
+    raw = pd.DataFrame({"school_code": [110103, 110103, "x"], "total_primary_teachers": [20, 3, -1]})
+    parsed, rep = check_teachers(raw, 2026, context())
+    assert parsed is None and {e["code"] for e in rep.errors} == {"school_code", "values", "duplicates"}
+    parsed, rep = check_teachers(pd.DataFrame({"school_code": [1]}), 2026, context())
+    assert parsed is None and "missing_columns" in {e["code"] for e in rep.errors}
+
+
+def test_teachers_against_the_students():
+    # 110103 has primary students but only pre-primary teachers; 110107 (a nursery) has primary teachers
+    raw = pd.DataFrame({"school_code": [110103, 110107], "total_primary_teachers": [None, 4],
+                        "total_preprimary_teachers": [1, 1]})
+    _, rep = check_teachers(raw, 2026, context())
+    assert {"no_teachers", "no_students"} <= {w["code"] for w in rep.warnings}
