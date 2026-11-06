@@ -5,11 +5,13 @@ from io import BytesIO
 
 import pandas as pd
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse, Response
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from .. import models as M
+from ..config import settings
 from ..db import get_session
 from ..domain import projection as P
 from ..imports import service as S
@@ -19,6 +21,7 @@ from ..schemas import ImportDetailOut, ImportOut
 from ..services import repository as R
 from ..services.audit import audit
 from ..services.auth import require_admin
+from ..services.store import store
 
 router = APIRouter(prefix="/admin/data", tags=["admin data"], dependencies=[Depends(require_admin)])
 XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
@@ -54,9 +57,17 @@ def sources(session: Session = Depends(get_session)) -> list[dict]:
     live = session.scalars(select(M.ImportRun).where(M.ImportRun.is_live)
                            .order_by(M.ImportRun.academic_year.desc())).all()
     return [{"kind": kind, "label": lab, "live": [_out(r, names) for r in live if r.kind == kind],
-             "connector": "not set up" if kind == "school_data" else None,
-             "missing_file": kind == S.NETWORK and any(r.kind == kind and not S.network_usable(r) for r in live)}
+             "connector": "not set up" if kind == "school_data" else None}
             for kind, (_, lab) in S.KINDS.items()]
+
+
+@router.get("/walking", summary="Planned schools' walking distance: the Esri Rwanda routing service, and whether it answers")
+async def walking() -> dict:
+    service = store.walking
+    if service is None:
+        return {"configured": False, "service": settings.esri_routing_url, "travel_mode": settings.esri_travel_mode,
+                "ok": False, "message": "Not set up: ESRI_USERNAME and ESRI_PASSWORD (or ESRI_TOKEN) are missing."}
+    return await run_in_threadpool(service.status)
 
 
 @router.post("/uploads", status_code=202, response_model=ImportDetailOut, summary="Upload a file; it is checked next")

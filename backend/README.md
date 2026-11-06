@@ -84,10 +84,10 @@ host localhost, port 5433). For another database copy `.env.example` to `.env`.
 | GET | `/api/school-levels` | 2026, one record per school × level; `t` = its teachers (null = no teacher data); `?capacity=` (20-100): at that many students per classroom |
 | GET | `/api/grades` | 2026, one row per school × grade; `?capacity=` as above |
 | GET | `/api/combos` | 2026, students and class groups per school × grade × combination |
-| GET | `/api/boundaries/{country,districts,sectors}` | GeoJSON outlines (PostGIS) |
+| GET | `/api/boundaries/{country,districts,sectors}` | GeoJSON outlines (PostGIS; loaded from Education Mapping's boundary service, see Updating the data) |
 | GET | `/api/projection/config` | years, levels, how new students enter, the default intake plan, the repetition and dropout `rates` |
 | GET | `/api/projection/default` | the projection with the default (catchment) plan |
-| POST | `/api/projection/run` | the projection for `{"intake": {"N1": {"Gasabo": [2027, 2028, 2029, 2030], …}}, "schools": [planned new schools]}`; a planned school is `{"name", "latitude", "longitude", "levels": {"PRI": 12}, "opening_year", "walking_km"}` (one level, or NUR + PRI) and appears in the rows as code -1, -2 …, described in `planned` (with `ring`, the schools within walking distance on the network, `area`, `unreachable`, `snap_km`, `on_main_network`; 422 when no walking network is published). What-if fields, never saved: `"capacity"` (students per classroom, every level, 20-100, default 46), `"repetition"`, `"dropout"` (default true) |
+| POST | `/api/projection/run` | the projection for `{"intake": {"N1": {"Gasabo": [2027, 2028, 2029, 2030], …}}, "schools": [planned new schools]}`; a planned school is `{"name", "latitude", "longitude", "levels": {"PRI": 12}, "opening_year", "walking_km"}` (one level, or NUR + PRI) and appears in the rows as code -1, -2 …, described in `planned` (with `ring`, the schools within walking distance on the network, `area`, `unreachable`, `snap_km`, `on_main_network`; 422 when walking distance is not set up, 503 when the Esri Rwanda routing service does not answer). What-if fields, never saved: `"capacity"` (students per classroom, every level, 20-100, default 46), `"repetition"`, `"dropout"` (default true) |
 | GET / POST | `/api/scenarios` | saved intake plans: list (any user) / save a new one (admins) |
 | GET / PUT / DELETE | `/api/scenarios/{id}` | open (any user) / update / delete (admins) a saved plan |
 | GET / POST | `/api/school-plans` | saved plans of new schools: list (any user) / save a new one (admins; the summary of what it changes is stored with it) |
@@ -98,6 +98,7 @@ host localhost, port 5433). For another database copy `.env.example` to `.env`.
 | GET | `/api/admin/audit` | admin: who changed what, newest first (`limit`, `before`, `user_id`, `action`) |
 | POST | `/api/admin/reload` | re-read the database after an import (signed-in admin, or header `X-Admin-Token`) |
 | GET | `/api/admin/data/sources` | admin: the live data of each kind |
+| GET | `/api/admin/data/walking` | admin: the walking-distance service (Esri Rwanda): set up, answering, its travel mode |
 | POST | `/api/admin/data/uploads` | admin: multipart `kind`, `file`, `academic_year` → the import, checked in the background |
 | GET | `/api/admin/data/imports`, `/imports/{id}` | admin: history; one import with its report |
 | POST | `/api/admin/data/imports/{id}/publish` · `discard` · `recheck` · `withdraw` | admin: the import's lifecycle |
@@ -108,9 +109,7 @@ host localhost, port 5433). For another database copy `.env.example` to `.env`.
 
 In the admin portal (Data → Upload): school data (one school year), the catchment file, NISR district totals, the
 MINEDUC repetition and dropout rates (the workbook with its two sheets; the projection needs them, so they are
-replaced, never withdrawn), the MINEDUC teachers file (one school year) or the walking network (an OpenStreetMap
-`.osm.pbf` of up to 200 MB, for planned schools' walking distance; replaced, never withdrawn; kept as a routing file in
-`UPLOAD_DIR`, with no rows in the database. Without one only planned schools stop working).
+replaced, never withdrawn) or the MINEDUC teachers file (one school year).
 The file is checked (errors block publishing, warnings are listed with the rows concerned); Publish replaces the live
 data in one transaction and reloads the API. Every import is kept (`UPLOAD_DIR`, default `../data-uploads`) and can be
 published again; a school year or the NISR figures can be withdrawn. The newest published school year is the base of
@@ -119,14 +118,36 @@ From the command line, `python -m etl.load_version2` loads `data-sources/` throu
 live are skipped, and so is a kind whose live data came from another file, such as an upload in the admin portal:
 `--replace` publishes over it).
 
+### Boundaries
+
+Provinces, districts and sectors come from Education Mapping's public feature service on the MINEDUC GIS portal
+(`BOUNDARIES_URL`, default *Administrative boundaries corrected* on `gh.space.gov.rw`, boundaries as of 2022). The import
+job loads them into the database, simplified to about 20 m (`BOUNDARIES_SIMPLIFY`, degrees), with the country outline as
+the union of the districts; `python -m etl.boundaries` refreshes only them (then restart the API or reload). Rows keep
+their code, so schools keep their sector when a name changes; names follow the service's spelling, and school data is
+matched to them ignoring case (the school data writes Ngororero, Nyagatare and Rulindo's sectors in capitals). The job
+refuses a service answer without 30 districts and 416 sectors.
+
+### Walking distance (planned schools)
+
+Nothing is uploaded: the API asks Esri Rwanda's network analysis services (`ESRI_ROUTING_URL`, default the
+`Routing042026` NAServer on `esrirw.rw`, built from OpenStreetMap roads and kept up to date by Esri Rwanda). For each
+planned school, one Origin Destination Cost Matrix solve gives the walking distance to the schools within its distance in
+a straight line, in the service's *Walking* travel mode with its one-way restriction removed, plus each point's walk to the
+road; one Service Area solve gives the area drawn on the map. A solve takes about 0.3 s (about 3 s for 20 km in Kigali);
+results are kept in memory (`WALKING_CACHE_SIZE`, 256). The API signs in to Esri Rwanda's portal with `ESRI_USERNAME` /
+`ESRI_PASSWORD` (an Esri Rwanda account, kept on the server; or a fixed `ESRI_TOKEN`) and needs HTTPS access to
+`esrirw.rw`. Without them planned schools are unavailable (422); when the service does not answer, a run with planned
+schools answers 503 and the dashboard switches them off; everything else keeps working. Admin portal → Data shows whether
+the service answers.
+
 Responses are prepared once and sent gzipped. The data is read from the database at startup (≈10 s) and kept in
 memory; a projection for a new plan takes ≈2 s and is cached (16 plans by default, `PROJECTION_CACHE_SIZE`).
 
 ## The engine
 
-`app/domain/analysis.py` and `projection.py` hold every rule (their docstrings explain them). The Excel scripts in
-`scripts/` import the same modules, so the workbooks, the API and the dashboard always agree. Change a rule there,
-then run the tests (`test_default_projection_matches_the_files` compares the database-backed projection with the
+`app/domain/analysis.py` and `projection.py` hold every rule (their docstrings explain them); the API and the
+dashboard use nothing else. Change a rule there, then run the tests (`test_default_projection_matches_the_files` compares the database-backed projection with the
 file-based one).
 
 ## Database changes

@@ -3,7 +3,7 @@ Classroom sufficiency analysis — shared data layer.
 
 Loads the classroom roster, applies the business rules from
 Data_Transformation_Brief.docx and returns the aggregated tables used by the
-Excel workbook, the dashboard and the written report.
+API and the dashboard.
 
 Business rules
 --------------

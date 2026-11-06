@@ -1,14 +1,11 @@
 """Read the analysis inputs from the database, in the same shape as the source files."""
 from __future__ import annotations
 
-from pathlib import Path
-
 import pandas as pd
 from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session
 
 from .. import models as M
-from ..config import settings
 from ..domain import analysis as A
 from ..domain import projection as P
 from ..domain import rates as RT
@@ -34,11 +31,6 @@ def read_roster(session: Session, year: int = P.BASE_YEAR) -> pd.DataFrame:
     the file."""
     df = pd.read_sql(ROSTER_SQL, session.connection(), params={"year": year})
     return A.prepare_roster(df)
-
-
-def network_file(run: M.ImportRun) -> Path:
-    """Where a walking network import's routing file is kept."""
-    return settings.upload_path / f"import-{run.id}.network.npz"
 
 
 def read_catchment_population(session: Session) -> pd.DataFrame:

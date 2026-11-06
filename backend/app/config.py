@@ -48,6 +48,25 @@ class Settings(BaseSettings):
     portal_timeout: float = 15  # seconds per request to the portal
     portal_verify_ssl: bool = True  # False only for a portal with a self-signed certificate
 
+    # Rwanda's administrative boundaries (services/boundaries.py): Education Mapping's public feature service on the
+    # MINEDUC GIS portal, loaded into the database by the import job; shapes simplified to this many degrees (~20 m)
+    boundaries_url: str = ("https://gh.space.gov.rw/server/rest/services/Administrative_boundaries_corrected/"
+                           "FeatureServer")
+    boundaries_simplify: float = 0.0002
+
+    # Planned schools' walking distance: the Esri Rwanda network analysis services (domain/walking.py). The account
+    # (or a fixed token) is Esri Rwanda's, not the MINEDUC portal's; without one, planned schools are unavailable.
+    esri_routing_url: str = "https://esrirw.rw/server/rest/services/Routing042026/NetworkAnalysis/NAServer"
+    esri_portal_url: str = "https://esrirw.rw/portal"
+    esri_username: str | None = None
+    esri_password: str | None = None
+    esri_token: str | None = None   # instead of the account: a token the portal issued for esri_referer
+    esri_referer: str = "https://esrirw.rw"  # the portal ties its token to this referer
+    esri_travel_mode: str = "Walking"
+    esri_timeout: float = 60        # seconds per request to the service
+    esri_verify_ssl: bool = True
+    walking_cache_size: int = 256   # walks kept in memory (per point, distance and schools asked about)
+
     @cached_property
     def url(self) -> str:
         return self.database_url or (

@@ -124,12 +124,12 @@ def viewer(make_client):
 
 @pytest.fixture
 def walking_grid(app_, monkeypatch):
-    """A street grid around Kicukiro in place of a published walking network (nothing is published)."""
+    """A street grid around Kicukiro in place of the Esri Rwanda walking service."""
     from app.services.store import store
 
     from .walking_fixtures import GRID
 
-    monkeypatch.setattr(store.snapshot, "network", GRID)
+    monkeypatch.setattr(store, "walking", GRID)
     return GRID
 
 

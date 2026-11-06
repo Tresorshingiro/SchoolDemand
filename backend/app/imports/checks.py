@@ -3,7 +3,6 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
-from pathlib import Path
 
 import pandas as pd
 
@@ -11,7 +10,7 @@ from ..domain import analysis as A
 from ..domain import projection as P
 from ..domain import rates as RT
 from ..domain import teachers as T
-from ..domain.walking import WalkingNetwork, extract_date
+from ..services.boundaries import place_key
 from .report import Report
 from .rooms import room_ids
 from .summary import expand_summary, is_summary
@@ -37,7 +36,6 @@ class CheckContext:
     preprimary: set[int]                             # pre-primary school codes of the newest school year
     catchment_totals: pd.DataFrame | None            # district x year: children aged 3 from the live catchment
     roster_of: Callable[[int], pd.DataFrame]         # the published roster of a school year
-    network_km: float | None = None                  # total km of the live walking network
 
 
 def _rows(df: pd.DataFrame, mask, cols: list[str]) -> pd.DataFrame:
@@ -116,7 +114,8 @@ def check_school_data(raw: pd.DataFrame, year: int | None, ctx: CheckContext) ->
     rep.warning("several_values", "A school with several names, districts, sectors or coordinates (the first is used)",
                 df[df["school_code"].isin(several)].drop_duplicates("school_code")[["row", "school_code", "school_name"]])
     info = df.drop_duplicates("school_code")
-    unknown = [(d, s) not in ctx.sectors for d, s in zip(info["district"], info["sector"])]
+    known = {place_key(d, s) for d, s in ctx.sectors}
+    unknown = [place_key(d, s) not in known for d, s in zip(info["district"], info["sector"])]
     rep.warning("unknown_sector", "District / sector not in the boundaries (the school shows as Unknown)",
                 info.loc[unknown, ["row", "school_code", "school_name", "district", "sector"]])
 
@@ -338,49 +337,8 @@ def check_teachers(raw: pd.DataFrame, year: int | None, ctx: CheckContext) -> tu
     return df.drop(columns=["row"]), rep
 
 
-# ---------------------------------------------------------------- walking network
-MIN_SHARE = 0.90       # of the live schools: within FAR_KM of the network, and on its largest connected part
-FAR_KM = 0.5
-SHRINK = 0.20          # warn when the network is this much smaller than the live one
-
-
-def check_walking_network(path: Path, year: int | None, ctx: CheckContext) -> tuple[WalkingNetwork | None, Report]:
-    """An OpenStreetMap extract (.osm.pbf): readable, walkable, and reaching the schools of the newest school year."""
-    rep = Report()
-    try:
-        network = WalkingNetwork.from_pbf(path)
-    except ValueError:
-        rep.error("no_ways", "The file has no walkable roads or paths.")
-        return None, rep
-    except (RuntimeError, OSError) as e:
-        rep.error("unreadable", f"The file could not be read as an OpenStreetMap extract: {e}")
-        return None, rep
-    rep.summary = {"km": round(network.total_km, 1), "points": network.nodes, "extract_date": extract_date(path)}
-    if ctx.network_km and network.total_km < ctx.network_km * (1 - SHRINK):
-        rep.warning("shrunk", f"This network has {network.total_km:,.0f} km, more than {SHRINK:.0%} below the live one "
-                              f"({ctx.network_km:,.0f} km).")
-    if not ctx.live_years:
-        return network, rep
-    schools = ctx.roster_of(max(ctx.live_years)).drop_duplicates("school_code")
-    lats, lons = schools["latitude"].to_numpy(dtype=float), schools["longitude"].to_numpy(dtype=float)
-    cover = network.coverage(lats, lons)
-    rep.summary.update(schools=len(schools), within_100m=round(cover["within_100m"], 4),
-                       within_500m=round(cover["within_500m"], 4), on_main=round(cover["on_main"], 4))
-    if cover["within_500m"] < MIN_SHARE:
-        rep.error("coverage", f"Only {cover['within_500m']:.1%} of the schools are within 500 m of this network "
-                              f"(at least {MIN_SHARE:.0%} needed).")
-    if cover["on_main"] < MIN_SHARE:
-        rep.error("connected", f"Only {cover['on_main']:.1%} of the schools are on its largest connected part "
-                               f"(at least {MIN_SHARE:.0%} needed).")
-    snap, off_main = network.far(lats, lons)
-    rows = schools[["school_code", "school_name", "latitude", "longitude"]].assign(km_to_network=snap.round(3))
-    rep.warning("far", "Schools more than 500 m from the network", rows[snap > FAR_KM])
-    rep.warning("disconnected", "Schools off the largest connected part", rows[off_main])
-    return (network if rep.ok else None), rep
-
-
 CHECKS = {"school_data": check_school_data, "catchment": check_catchment, "nisr_population": check_nisr,
-          "flow_rates": check_flow_rates, "teachers": check_teachers, "walking_network": check_walking_network}
+          "flow_rates": check_flow_rates, "teachers": check_teachers}
 
 
 # ---------------------------------------------------------------- templates (the portal's "Template" downloads)

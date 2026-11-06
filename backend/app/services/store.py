@@ -8,7 +8,6 @@ from __future__ import annotations
 import gzip
 import hashlib
 import json
-import logging
 import threading
 import time
 from collections import OrderedDict
@@ -24,8 +23,6 @@ from ..domain import projection as P
 from ..domain import rates as RT
 from ..domain import walking as WK
 from . import repository as R
-
-log = logging.getLogger("school_planning.store")
 
 
 @dataclass(frozen=True)
@@ -53,7 +50,6 @@ class Snapshot:
     import_run: list[dict]            # the live imports (sources)
     loaded_at: float
     year_inputs: dict[int, dict]      # D.current's keyword arguments of each year (a what-if students per classroom)
-    network: WK.WalkingNetwork | None = None  # planned schools' walking distance; None = none published or file lost
 
     @property
     def roster(self) -> pd.DataFrame:
@@ -89,16 +85,6 @@ def intake_frames(intake: dict[str, dict[str, list[int]]], horizon: P.Horizon) -
     return {g: pd.DataFrame({d: v for d, v in t.items()}, index=horizon.future).T for g, t in intake.items() if t}
 
 
-def _read_network(run) -> WK.WalkingNetwork | None:
-    """The live network's routing file; without it only planned schools stop working."""
-    path = R.network_file(run)
-    try:
-        return WK.WalkingNetwork.load(path)
-    except Exception as e:  # noqa: BLE001 — missing, cut short or damaged: never stops the rest of the dashboard
-        log.warning("walking network of import %s could not be read (%s): planned schools are unavailable", run.id, e)
-        return None
-
-
 def _source(run, name: str | None) -> dict:
     return {"kind": run.kind, "year": run.academic_year, "file": run.file_name or run.endpoint,
             "publishedAt": run.published_at.isoformat() if run.published_at else None, "publishedBy": name}
@@ -106,10 +92,13 @@ def _source(run, name: str | None) -> dict:
 
 class Store:
     def __init__(self) -> None:
+        # Planned schools' walking distance (the Esri Rwanda routing service); None = not set up on this server
+        self.walking: WK.Walking | None = WK.from_settings(settings)
         self._lock = threading.RLock()
         self._snap: Snapshot | None = None
         self._runs: OrderedDict[str, Payload] = OrderedDict()
         self._year_runs: OrderedDict[tuple[int, int], dict[str, Payload]] = OrderedDict()
+        self._config: tuple[Snapshot, bool, Payload] | None = None  # projection_config, per snapshot and service
 
     @property
     def ready(self) -> bool:
@@ -146,14 +135,11 @@ class Store:
                         else (None, None) for y in years}
             shapes = R.boundaries(session)
             sources = [_source(run, name) for run, name in live]
-            network_run = next((run for run, _ in live if run.kind == "walking_network"), None)
-            network = _read_network(network_run) if network_run is not None else None
         base = P.base_schools(rosters[horizon.base])
         population = P.default_intake(catchment, base.info, nisr)
         measured = set() if nisr.empty else {int(c) for c in nisr.columns}
         estimated = {"N1": [y for y in P.estimated_years(pop, horizon) if y not in measured]}
-        config = {**D.projection_config(base, catchment, horizon, population, estimated, rates),
-                  "walkingNetwork": network is not None}
+        config = D.projection_config(base, catchment, horizon, population, estimated, rates)
         payloads = {"projection-config": Payload.of(config),
                     **{f"boundaries/{k}": Payload.of(v) for k, v in shapes.items()}}
         year_inputs = {}
@@ -169,7 +155,7 @@ class Store:
             payloads.update({f"meta/{y}": Payload.of(meta), f"school-levels/{y}": Payload.of(data["school_levels"]),
                              f"grades/{y}": Payload.of(data["grades"]), f"combos/{y}": Payload.of(data["combos"])})
         snap = Snapshot(rosters, horizon, base, catchment, rates, payloads, config["population"], sources, time.time(),
-                        year_inputs, network)
+                        year_inputs)
         default = self._compute(snap, None)
         with self._lock:
             self._snap = snap
@@ -181,6 +167,19 @@ class Store:
 
     def payload(self, name: str) -> Payload:
         return self.snapshot.payloads[name]
+
+    def projection_config(self) -> Payload:
+        """GET /api/projection/config: the prepared configuration, and whether planned schools can be calculated."""
+        snap = self.snapshot
+        on = self.walking is not None
+        with self._lock:
+            cached = self._config
+            if cached and cached[0] is snap and cached[1] == on:
+                return cached[2]
+        payload = Payload.of({**json.loads(snap.payloads["projection-config"].raw), "walkingNetwork": on})
+        with self._lock:
+            self._config = (snap, on, payload)
+        return payload
 
     def year_payload(self, name: str, year: int | None, capacity: int | None = None) -> Payload:
         """A per-year payload (meta, school-levels, grades, combos) of a published school year (default: the base). With
@@ -229,39 +228,28 @@ class Store:
         (a saved plan's summary must not depend on what someone is trying on screen)."""
         return self._frames(self.snapshot, intake, planned)
 
-    @staticmethod
-    def _frames(snap: Snapshot, intake: dict[str, dict[str, list[int]]] | None,
+    def _frames(self, snap: Snapshot, intake: dict[str, dict[str, list[int]]] | None,
                 planned: tuple[NS.PlannedSchool, ...] = (), assumptions: Assumptions = DEFAULTS,
                 reaches=None) -> tuple[pd.DataFrame, ...]:
         rates = RT.switched(snap.rates, assumptions.repetition, assumptions.dropout)
         capacity = None if assumptions.capacity == DEFAULTS.capacity else assumptions.capacity
         return NS.project(snap.roster, intake_frames(intake or snap.default_intake, snap.horizon), planned,
                           catchment=snap.catchment, base=snap.base, horizon=snap.horizon, rates=rates, capacity=capacity,
-                          network=snap.network, reaches=reaches)
+                          network=self.walking, reaches=reaches)
 
-    @staticmethod
-    def _outline(school: NS.PlannedSchool, reach: WK.Reach) -> dict | None:
-        """The map's outline of the walking area; a failure here never fails the run."""
-        try:
-            return WK.outline(school.latitude, school.longitude, reach.reached_lat, reach.reached_lon)
-        except Exception as e:  # noqa: BLE001
-            log.warning("walking area outline failed: %s", e)
-            return None
-
-    @classmethod
-    def _compute(cls, snap: Snapshot, intake: dict[str, dict[str, list[int]]] | None,
+    def _compute(self, snap: Snapshot, intake: dict[str, dict[str, list[int]]] | None,
                  planned: tuple[NS.PlannedSchool, ...] = (), assumptions: Assumptions = DEFAULTS) -> Payload:
         rings, details, reaches = [], [], None
         if planned:
-            if snap.network is None:
-                raise NS.NoWalkingNetwork("No walking network published yet.")
+            walking = self.walking
+            if walking is None:
+                raise NS.NoWalkingNetwork(NS.NO_WALKING)
             b = NS.with_planned(snap.base, planned)
-            reaches = NS.reach_table(b, planned, snap.network)
-            rings = NS.rings(b, planned, snap.network, reaches)
-            details = [{"area": cls._outline(s, r), "unreachable": u, "snap_km": r.snap_km,
-                        "on_main_network": r.on_main_network}
-                       for s, r, u in zip(planned, reaches, NS.unreachable(b, planned, reaches))]
-        _, schools, grades, combos = cls._frames(snap, intake, planned, assumptions, reaches)
+            reaches = NS.reach_table(b, planned, walking)  # WalkingUnavailable when the service cannot answer
+            rings = NS.rings(b, planned, walking, reaches)
+            details = [{"area": r.area, "unreachable": u, "snap_km": r.snap_km, "on_main_network": r.on_main_network}
+                       for r, u in zip(reaches, NS.unreachable(b, planned, reaches))]
+        _, schools, grades, combos = self._frames(snap, intake, planned, assumptions, reaches)
         return Payload.of({**D.encode_projection(schools, grades, combos, snap.horizon),
                            "planned": D.encode_planned(planned, rings, details)})
 

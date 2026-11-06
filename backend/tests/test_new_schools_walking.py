@@ -6,8 +6,8 @@ import pytest
 from app.domain import new_schools as NS
 from app.domain import projection as P
 from app.domain import rates as RT
-from app.domain.walking import WalkingNetwork
 from tests.test_new_schools import C138, catch, ring_roster, roster, school
+from tests.walking_samples import GraphWalking as WalkingNetwork
 from tests.walking_samples import line
 
 LAT, LON = -1.95, 30.10

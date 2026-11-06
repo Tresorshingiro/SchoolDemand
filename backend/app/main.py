@@ -15,6 +15,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from .config import settings
+from .domain.walking import WalkingUnavailable
 from .routers import admin, auth, data, data_admin, projection, scenarios, school_plans, system
 from .services.auth import csrf_refused
 from .services.store import store
@@ -48,6 +49,12 @@ app = FastAPI(
     redoc_url=None,
     lifespan=lifespan,
 )
+
+
+@app.exception_handler(WalkingUnavailable)
+async def walking_unavailable(_: Request, e: WalkingUnavailable) -> JSONResponse:
+    """The Esri Rwanda routing service could not answer for a run with planned schools: the rest keeps working."""
+    return JSONResponse({"detail": str(e)}, status_code=503)
 
 
 @app.middleware("http")

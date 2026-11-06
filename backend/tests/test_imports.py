@@ -16,7 +16,7 @@ from tests import samples
 def test_existing_data_is_live():
     with SessionLocal() as s:
         live = s.scalars(select(M.ImportRun).where(M.ImportRun.is_live)).all()
-        assert sorted((r.kind, r.academic_year or 0) for r in live if r.kind != "walking_network") == [
+        assert sorted((r.kind, r.academic_year or 0) for r in live) == [
             ("catchment", 0), ("flow_rates", 0), ("school_data", 2026), ("teachers", 2026)]
         assert all(r.status == "published" for r in live)
         assert s.scalar(select(func.count()).select_from(M.Classroom).where(M.Classroom.academic_year_id.is_(None))) == 0
@@ -28,7 +28,7 @@ def test_meta_lists_the_school_years(client):
     meta = client.get("/api/meta").json()
     assert meta["actualYears"] == [2026] and meta["baseYear"] == 2026
     assert meta["projectionYears"] == [2027, 2028, 2029, 2030]
-    assert {s["kind"] for s in meta["sources"]} - {"walking_network"} == {"school_data", "catchment", "flow_rates", "teachers"}
+    assert {s["kind"] for s in meta["sources"]} == {"school_data", "catchment", "flow_rates", "teachers"}
 
 
 def test_year_parameter(client):
@@ -150,7 +150,7 @@ def test_data_routes_are_admin_only(viewer):
 
 def test_sources_and_templates(client):
     kinds = {k["kind"]: k for k in client.get(f"{DATA}/sources").json()}
-    assert set(kinds) == {"school_data", "catchment", "nisr_population", "flow_rates", "teachers", "walking_network"}
+    assert set(kinds) == {"school_data", "catchment", "nisr_population", "flow_rates", "teachers"}
     assert [r["academic_year"] for r in kinds["school_data"]["live"]] == [2026] and kinds["nisr_population"]["live"] == []
     assert kinds["school_data"]["connector"] == "not set up"
     r = client.get(f"{DATA}/templates/catchment")

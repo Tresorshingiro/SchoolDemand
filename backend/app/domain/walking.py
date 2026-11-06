@@ -1,271 +1,373 @@
 """
-The walking network: how far apart two places are on foot, along OpenStreetMap roads and paths.
+Walking distance on the Esri Rwanda road network: the network analysis services of Esri Rwanda's ArcGIS Enterprise
+(settings.esri_routing_url, the Routing042026 network built from OpenStreetMap roads of July 2025, kept up to date by
+Esri Rwanda). Nothing is uploaded or stored here: each planned school asks the service.
 
-    walking distance(A, B) = A to its nearest network point + along the network + B's nearest network point to B
+    walking distance(A, B) = A to the network + along the network + the network to B
 
-Built from a Rwanda .osm.pbf extract (published as the data kind "walking_network"). Every way with a highway tag can be
-walked in both directions, except SKIP_HIGHWAYS and ways marked foot / access = no or private. To keep it small, a stretch
-between junctions keeps a point about every SPACING_KM; the kept edges carry the full length of what they replace.
-Distance only: no slope and no walking time.
+* Along the network: an Origin Destination Cost Matrix solve from the planned school to the schools within its walking
+  distance in a straight line (no school farther than that can be within it on foot), in the service's "Walking"
+  travel mode, by length. The mode keeps the one-way restriction of the driving modes; it is removed, because a
+  pedestrian walks a one-way street both ways.
+* To and from the network: the service's DistanceToNetworkInMeters of each point (it places points up to 20 km away,
+  so a point far from any road shows a long walk to the network, as before).
+* The walking area on the map: a Service Area solve from the point, to its walking distance less its walk to the
+  network. For the map only: a failure there never fails the run.
+* A school is "connected" unless the service finds no route to it, or cannot place it on the network.
+
+Results are kept per point, distance and schools asked about (EsriWalking.cache_size), since every run of a plan asks
+again. The service's token comes from Esri Rwanda's portal (generateToken with a username and password, or a fixed
+ESRI_TOKEN), is kept until shortly before it expires and is never sent to the browser.
 """
 from __future__ import annotations
 
+import json
+import logging
 import math
-import zipfile
-from collections.abc import Sequence
+import ssl
+import threading
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
+from collections import OrderedDict
+from collections.abc import Callable
 from dataclasses import dataclass
-from pathlib import Path
+from typing import Protocol
 
 import numpy as np
-from scipy.sparse import coo_matrix, csr_matrix
-from scipy.sparse.csgraph import connected_components, dijkstra
-from scipy.spatial import cKDTree
 
-SKIP_HIGHWAYS = frozenset({"motorway", "motorway_link", "construction", "proposed", "raceway", "bus_guideway", "abandoned",
-                           "platform", "elevator"})
-NO_FOOT = frozenset({"no", "private"})
-SPACING_KM = 0.025
-KM_PER_DEG_LAT = 110.57
-KM_PER_DEG_LON = 111.32  # at the equator
-_MIDDLE_LAT = -1.95      # Rwanda: the nearest-point search uses one projection, good to a fraction of a percent here
-_KX, _KY = KM_PER_DEG_LON * math.cos(math.radians(_MIDDLE_LAT)), KM_PER_DEG_LAT
+log = logging.getLogger("school_planning.walking")
+
+INVALID_TOKEN = {498, 499}       # ArcGIS: invalid or expired token, token required
+TOKEN_MINUTES = 60
+TOKEN_MARGIN_S = 5 * 60          # a new token this long before the old one expires
+BATCH = 1000                     # destinations per Origin Destination Cost Matrix request
+STRAIGHT_MARGIN = 1.01           # schools asked about: within the walking distance in a straight line (+1%)
+UNITS_M = {"esrinaumeters": 1.0, "esrinaukilometers": 1000.0, "esrinaumiles": 1609.344, "esrinaufeet": 0.3048}
+ONEWAY = "oneway"
 
 
-def _xy(lats, lons) -> np.ndarray:
-    return np.column_stack([np.asarray(lons, dtype=float) * _KX, np.asarray(lats, dtype=float) * _KY])
-
-
-def _lengths(lat: np.ndarray, lon: np.ndarray, a: np.ndarray, b: np.ndarray) -> np.ndarray:
-    kx = KM_PER_DEG_LON * np.cos(np.radians((lat[a] + lat[b]) / 2))
-    return np.hypot((lon[a] - lon[b]) * kx, (lat[a] - lat[b]) * KM_PER_DEG_LAT)
-
-
-def _shortest_edges(a: np.ndarray, b: np.ndarray, w: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """One edge per pair of points (the shorter of parallel ones), no edge from a point to itself."""
-    lo, hi = np.minimum(a, b), np.maximum(a, b)
-    keep = lo != hi
-    lo, hi, w = lo[keep], hi[keep], w[keep]
-    order = np.lexsort((w, hi, lo))
-    lo, hi, w = lo[order], hi[order], w[order]
-    first = np.r_[True, (lo[1:] != lo[:-1]) | (hi[1:] != hi[:-1])] if len(lo) else np.zeros(0, dtype=bool)
-    return lo[first], hi[first], w[first]
-
-
-def _thin(n: int, a: np.ndarray, b: np.ndarray, w: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Edges with the points inside each stretch between junctions thinned to about every SPACING_KM."""
-    a, b, w = _shortest_edges(a, b, w)
-    g = coo_matrix((np.r_[w, w], (np.r_[a, b], np.r_[b, a])), shape=(n, n)).tocsr()
-    ptr, nbr, dist = g.indptr.tolist(), g.indices.tolist(), g.data.tolist()
-    junction = bytearray(1 if ptr[i + 1] - ptr[i] != 2 else 0 for i in range(n))
-    walked, seen = bytearray(len(nbr)), bytearray(n)
-    out_a, out_b, out_w = [], [], []
-
-    def walk_from(start: int) -> None:
-        for k in range(ptr[start], ptr[start + 1]):
-            if walked[k]:
-                continue
-            walked[k] = 1
-            prev, cur, acc, last = start, nbr[k], dist[k], start
-            while not junction[cur]:
-                seen[cur] = 1
-                if acc >= SPACING_KM:
-                    out_a.append(last); out_b.append(cur); out_w.append(acc)
-                    last, acc = cur, 0.0
-                s = ptr[cur]
-                j = s if nbr[s] != prev else s + 1
-                acc += dist[j]
-                prev, cur = cur, nbr[j]
-            for j in range(ptr[cur], ptr[cur + 1]):  # do not walk this stretch again from its other end
-                if nbr[j] == prev:
-                    walked[j] = 1
-            if last != cur:
-                out_a.append(last); out_b.append(cur); out_w.append(acc)
-
-    for i in range(n):
-        if junction[i] and ptr[i + 1] > ptr[i]:
-            seen[i] = 1
-            walk_from(i)
-    for i in range(n):  # closed loops with no junction: start anywhere on them
-        if not seen[i] and ptr[i + 1] - ptr[i] == 2:
-            junction[i] = 1
-            seen[i] = 1
-            walk_from(i)
-    return _shortest_edges(np.array(out_a, dtype=np.int64), np.array(out_b, dtype=np.int64), np.array(out_w, dtype=float))
+class WalkingUnavailable(Exception):
+    """The walking-distance service could not answer (cannot be reached, refused the request or the account)."""
 
 
 @dataclass(frozen=True)
 class Reach:
     """What a walk from one point reaches, for the targets asked about."""
     km: np.ndarray               # walking distance to each target; inf beyond the limit, with no route or no coordinates
-    snap_km: float               # from the point to its nearest network point
-    on_main_network: bool        # that network point is on the largest connected part
-    connected: np.ndarray        # each target's nearest network point is on the same connected part
-    reached_lat: np.ndarray      # the network points within the limit
-    reached_lon: np.ndarray
+    snap_km: float               # from the point to the network
+    on_main_network: bool        # the service placed the point on the network
+    connected: np.ndarray        # False for a target the service has no route to (or no coordinates)
+    area: dict | None = None     # GeoJSON outline of the walking area, for the map only
 
 
-class WalkingNetwork:
-    def __init__(self, lat: np.ndarray, lon: np.ndarray, graph: csr_matrix) -> None:
-        self.lat, self.lon, self.graph = lat, lon, graph
-        _, self.label = connected_components(graph, directed=False)
-        self.main = int(np.argmax(np.bincount(self.label)))
-        self.tree = cKDTree(_xy(lat, lon))
+class Walking(Protocol):
+    """Anything that tells how far a point reaches on foot (EsriWalking; a small graph in the tests)."""
 
-    @property
-    def nodes(self) -> int:
-        return len(self.lat)
+    def reach(self, lat: float, lon: float, lats: np.ndarray, lons: np.ndarray, limit_km: float) -> Reach: ...
 
-    @property
-    def total_km(self) -> float:
-        return float(self.graph.data.sum() / 2)
 
-    @classmethod
-    def from_edges(cls, lats: Sequence[float], lons: Sequence[float], edges: Sequence[tuple[int, int]]) -> WalkingNetwork:
-        lat, lon = np.asarray(lats, dtype=float), np.asarray(lons, dtype=float)
-        pairs = np.asarray(edges, dtype=np.int64).reshape(-1, 2)
-        a, b = pairs[:, 0], pairs[:, 1]
-        a, b, w = _thin(len(lat), a, b, _lengths(lat, lon, a, b))
-        if not len(a):
-            raise ValueError("no walkable ways")
-        used, inverse = np.unique(np.r_[a, b], return_inverse=True)
-        a, b = inverse[: len(a)], inverse[len(a):]
-        m = len(used)
-        graph = coo_matrix((np.r_[w, w], (np.r_[a, b], np.r_[b, a])), shape=(m, m)).tocsr()
-        return cls(lat[used].astype(np.float32), lon[used].astype(np.float32), _compact(graph))
+def distance_km(lat: float, lon: float, lats: np.ndarray, lons: np.ndarray) -> np.ndarray:
+    """Great-circle distance in km from one point to many (inf where a coordinate is missing)."""
+    p1, p2 = math.radians(lat), np.radians(lats)
+    a = (np.sin((p2 - p1) / 2) ** 2
+         + math.cos(p1) * np.cos(p2) * np.sin(np.radians(lons - lon) / 2) ** 2)
+    d = 2 * 6371.0 * np.arcsin(np.sqrt(np.clip(a, 0, 1)))
+    return np.where(np.isfinite(d), d, np.inf)
 
-    @classmethod
-    def from_pbf(cls, path: Path) -> WalkingNetwork:
-        """The walkable ways of an .osm.pbf. ValueError when it has none; osmium's error when it cannot be read."""
-        import osmium  # noqa: PLC0415 — only the check of a new file needs it
 
-        index: dict[int, int] = {}
-        lats: list[float] = []
-        lons: list[float] = []
-        edges: list[tuple[int, int]] = []
+# ---------------------------------------------------------------- Esri JSON helpers
+def _features(points: list[tuple[float, float]]) -> str:
+    """Points (lat, lon) as an Esri feature set, named by their position."""
+    return json.dumps({"features": [{"geometry": {"x": float(lon), "y": float(lat)}, "attributes": {"Name": str(i)}}
+                                    for i, (lat, lon) in enumerate(points)],
+                       "spatialReference": {"wkid": 4326}})
 
-        class Ways(osmium.SimpleHandler):
-            def way(self, w) -> None:
-                tags = w.tags
-                kind = tags.get("highway")
-                if (kind is None or kind in SKIP_HIGHWAYS or tags.get("foot") in NO_FOOT
-                        or tags.get("access") in NO_FOOT):
-                    return
-                prev = None
-                for n in w.nodes:
-                    if not n.location.valid():
-                        prev = None
-                        continue
-                    i = index.get(n.ref)
-                    if i is None:
-                        i = index[n.ref] = len(lats)
-                        lats.append(n.location.lat)
-                        lons.append(n.location.lon)
-                    if prev is not None:
-                        edges.append((prev, i))
-                    prev = i
 
-        Ways().apply_file(str(path), locations=True)
-        if not edges:
-            raise ValueError("no walkable ways")
-        return cls.from_edges(lats, lons, edges)
+def walking_mode(description: dict, name: str) -> tuple[dict, str, float]:
+    """(travel mode, distance attribute, metres per unit) of a network analysis layer's description: the mode `name`
+    with its one-way restriction removed. ValueError when the layer has no such mode."""
+    modes = description.get("supportedTravelModes") or []
+    mode = next((m for m in modes if str(m.get("name", "")).casefold() == name.casefold()), None)
+    if mode is None:
+        found = ", ".join(str(m.get("name")) for m in modes) or "none"
+        raise ValueError(f"The routing service has no {name!r} travel mode (it has: {found}).")
+    mode = {**mode,
+            "restrictionAttributeNames": [r for r in mode.get("restrictionAttributeNames") or []
+                                          if r.casefold() != ONEWAY],
+            "attributeParameterValues": [p for p in mode.get("attributeParameterValues") or []
+                                         if str(p.get("attributeName", "")).casefold() != ONEWAY]}
+    attr = mode.get("distanceAttributeName") or mode.get("impedanceAttributeName")
+    units = next((a.get("units") for a in (description.get("networkDataset") or {}).get("networkAttributes") or []
+                  if a.get("name") == attr), "esriNAUMeters")
+    return mode, attr, UNITS_M.get(str(units).casefold(), 1.0)
 
-    def save(self, path: Path) -> None:
-        g = self.graph
-        np.savez_compressed(path, lat=self.lat, lon=self.lon, data=g.data, indices=g.indices, indptr=g.indptr)
 
-    @classmethod
-    def load(cls, path: Path) -> WalkingNetwork:
-        with np.load(path) as f:
-            n = len(f["lat"])
-            graph = csr_matrix((f["data"], f["indices"], f["indptr"]), shape=(n, n))
-            return cls(f["lat"], f["lon"], graph)
+def _ring_area(ring: list[list[float]]) -> float:
+    """Shoelace sum: negative for a clockwise ring (an Esri outer ring)."""
+    return sum(x1 * y2 - x2 * y1 for (x1, y1), (x2, y2) in zip(ring, ring[1:] + ring[:1]))
 
-    def _snap(self, lats: np.ndarray, lons: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-        """For each point: has coordinates, km to the nearest network point (inf without), which one (0 without)."""
-        ok = np.isfinite(lats) & np.isfinite(lons)
-        km, node = np.full(len(lats), np.inf), np.zeros(len(lats), dtype=np.int64)
-        if ok.any():
-            km[ok], node[ok] = self.tree.query(_xy(lats[ok], lons[ok]))
-        return ok, km, node
+
+def _inside(point: list[float], ring: list[list[float]]) -> bool:
+    x, y = point
+    hit = False
+    for (x1, y1), (x2, y2) in zip(ring, ring[1:] + ring[:1]):
+        if (y1 > y) != (y2 > y) and x < (x2 - x1) * (y - y1) / (y2 - y1) + x1:
+            hit = not hit
+    return hit
+
+
+def esri_rings_to_geojson(rings: list[list[list[float]]]) -> dict | None:
+    """An Esri polygon's rings (outer rings clockwise, holes counter-clockwise) as a GeoJSON Polygon or MultiPolygon
+    (outer rings counter-clockwise, holes clockwise; coordinates to 5 decimals)."""
+    def clean(ring):
+        r = [[round(float(x), 5), round(float(y), 5)] for x, y, *_ in ring]
+        return r if len(r) >= 4 else None
+
+    outers, holes = [], []
+    for ring in rings:
+        r = clean(ring)
+        if r is None:
+            continue
+        (outers if _ring_area(r) <= 0 else holes).append(r)
+    if not outers:
+        return None
+    polygons = [[o[::-1]] for o in outers]  # counter-clockwise
+    for h in holes:  # clockwise, in the outer ring that holds it
+        k = next((i for i, o in enumerate(outers) if _inside(h[0], o)), None)
+        if k is not None:
+            polygons[k].append(h[::-1])
+    if len(polygons) == 1:
+        return {"type": "Polygon", "coordinates": polygons[0]}
+    return {"type": "MultiPolygon", "coordinates": polygons}
+
+
+# ---------------------------------------------------------------- the service
+Http = Callable[[str, dict], dict]  # POST form data to a URL -> the parsed JSON answer
+
+
+class EsriWalking:
+    """The Esri Rwanda network analysis services (Origin Destination Cost Matrix, Service Area)."""
+
+    def __init__(self, routing_url: str, *, portal_url: str | None = None, username: str | None = None,
+                 password: str | None = None, token: str | None = None, referer: str = "",
+                 travel_mode: str = "Walking", timeout: float = 60, verify_ssl: bool = True, cache_size: int = 256,
+                 http: Http | None = None) -> None:
+        self.routing_url = routing_url.rstrip("/")
+        self.portal_url = (portal_url or "").rstrip("/")
+        self.username, self.password, self.fixed_token = username, password, token
+        self.referer = referer or _origin(self.routing_url)
+        self.travel_mode, self.timeout, self.verify_ssl = travel_mode, timeout, verify_ssl
+        self.cache_size = cache_size
+        self._http = http or self._urllib_post
+        self._lock = threading.RLock()
+        self._token: str | None = None
+        self._expires = 0.0
+        self._mode: tuple[dict, str, float] | None = None
+        self._cache: OrderedDict[tuple, Reach] = OrderedDict()
+
+    # ------------------------------------------------------------ HTTP and the token
+    def _urllib_post(self, url: str, data: dict) -> dict:
+        request = urllib.request.Request(url, data=urllib.parse.urlencode(data).encode(),
+                                         headers={"Referer": self.referer, "Accept": "application/json"})
+        context = None if self.verify_ssl else ssl._create_unverified_context()  # noqa: S323 — opt-in setting
+        try:
+            with urllib.request.urlopen(request, timeout=self.timeout, context=context) as response:  # noqa: S310
+                return json.load(response)
+        except (urllib.error.URLError, TimeoutError, ValueError, OSError) as e:
+            log.warning("walking service %s unreachable: %r", url, e)
+            raise WalkingUnavailable("The Esri Rwanda routing service could not be reached. Try again in a moment.") from e
+
+    def _new_token(self) -> str:
+        if self.fixed_token:
+            return self.fixed_token
+        if not (self.portal_url and self.username and self.password):
+            raise WalkingUnavailable("Walking distance is not set up: ESRI_USERNAME and ESRI_PASSWORD are missing.")
+        got = self._http(f"{self.portal_url}/sharing/rest/generateToken", {
+            "username": self.username, "password": self.password, "client": "referer", "referer": self.referer,
+            "expiration": TOKEN_MINUTES, "f": "json"})
+        token = got.get("token")
+        if not token:
+            log.warning("Esri Rwanda portal refused the walking service account: %s", got.get("error"))
+            raise WalkingUnavailable("The Esri Rwanda portal refused the walking-distance account (ESRI_USERNAME / "
+                                     "ESRI_PASSWORD).")
+        expires = float(got.get("expires") or 0) / 1000  # milliseconds since 1970
+        self._expires = expires if expires else time.time() + TOKEN_MINUTES * 60
+        return token
+
+    def _get_token(self, fresh: bool = False) -> str:
+        with self._lock:
+            if fresh or self._token is None or (not self.fixed_token and time.time() > self._expires - TOKEN_MARGIN_S):
+                self._token = self._new_token()
+            return self._token
+
+    def _call(self, path: str, data: dict) -> dict:
+        """POST to a layer of the routing service with the token (a new one once when it was refused)."""
+        url = f"{self.routing_url}/{path}"
+        for attempt in range(2):
+            answer = self._http(url, {**data, "f": "json", "token": self._get_token(fresh=attempt > 0)})
+            error = answer.get("error") if isinstance(answer, dict) else None
+            if not error:
+                return answer
+            if error.get("code") in INVALID_TOKEN and attempt == 0 and not self.fixed_token:
+                continue
+            detail = "; ".join(error.get("details") or []) or error.get("message") or "error"
+            raise _SolveError(f"{path}: {detail}", error)
+        raise AssertionError("unreachable")
+
+    def _walking_mode(self) -> tuple[dict, str, float]:
+        with self._lock:
+            if self._mode is None:
+                try:
+                    description = self._call("OriginDestinationCostMatrix", {})
+                    self._mode = walking_mode(description, self.travel_mode)
+                except (_SolveError, ValueError) as e:
+                    log.warning("walking travel mode unavailable: %s", e)
+                    raise WalkingUnavailable(f"The Esri Rwanda routing service has no usable walking mode: {e}") from e
+            return self._mode
+
+    # ------------------------------------------------------------ solves
+    def _matrix(self, lat: float, lon: float, targets: list[tuple[float, float]]) -> tuple[float, int, list]:
+        """(origin metres to the network, origin status, per target (metres along or None, metres to the network,
+        status)). The origin itself is asked about too, so the answer always says where the origin is."""
+        mode, attr, per_unit = self._walking_mode()
+        points = [(lat, lon), *targets]
+        out: list = []
+        origin_snap, origin_status = math.inf, 1
+        for start in range(0, len(points), BATCH):
+            chunk = points[start:start + BATCH]
+            try:
+                answer = self._call("OriginDestinationCostMatrix/solveODCostMatrix", {
+                    "origins": _features([(lat, lon)]), "destinations": _features(chunk),
+                    "travelMode": json.dumps(mode), "outputType": "esriNAODOutputSparseMatrix",
+                    "returnOrigins": "true", "returnDestinations": "true", "outSR": 4326})
+            except _SolveError as e:
+                if e.no_solution:  # nothing reachable (the point is not on the network): no routes, not a failure
+                    answer = {}
+                else:
+                    log.warning("walking distance solve failed: %s", e)
+                    raise WalkingUnavailable("The Esri Rwanda routing service could not calculate walking "
+                                             f"distances ({e}).") from e
+            origins = (answer.get("origins") or {}).get("features") or []
+            if origins:
+                a = origins[0].get("attributes") or {}
+                origin_snap, origin_status = float(a.get("DistanceToNetworkInMeters") or 0), int(a.get("Status") or 0)
+            matrix = answer.get("odCostMatrix") or {}
+            names = matrix.get("costAttributeNames") or [attr]
+            col = names.index(attr) if attr in names else 0
+            row = next((v for k, v in matrix.items() if k != "costAttributeNames"), {})
+            by_name = {}
+            for f in (answer.get("destinations") or {}).get("features") or []:
+                a = f.get("attributes") or {}
+                cost = row.get(str(a.get("ObjectID")))
+                by_name[int(a.get("Name"))] = (None if cost is None or cost[col] is None else float(cost[col]) * per_unit,
+                                               float(a.get("DistanceToNetworkInMeters") or 0), int(a.get("Status") or 0))
+            out += [by_name.get(i, (None, math.inf, 1)) for i in range(len(chunk))]
+        return origin_snap, origin_status, out[1:]
+
+    def _area(self, lat: float, lon: float, metres: float) -> dict | None:
+        """The walking area's outline, for the map (None when it fails: logged, never fails the run)."""
+        if metres <= 0:
+            return None
+        mode, _, per_unit = self._walking_mode()
+        try:
+            answer = self._call("ServiceArea/solveServiceArea", {
+                "facilities": _features([(lat, lon)]), "travelMode": json.dumps(mode),
+                "defaultBreaks": f"{metres / per_unit:.1f}", "travelDirection": "esriNATravelDirectionFromFacility",
+                "outputPolygons": "esriNAOutputPolygonSimplified", "returnFacilities": "false", "outSR": 4326})
+            polygons = (answer.get("saPolygons") or {}).get("features") or []
+            rings = [r for p in polygons for r in (p.get("geometry") or {}).get("rings") or []]
+            return esri_rings_to_geojson(rings)
+        except Exception as e:  # noqa: BLE001
+            log.warning("walking area outline failed: %s", e)
+            raise _AreaFailed() from e
 
     def reach(self, lat: float, lon: float, lats: np.ndarray, lons: np.ndarray, limit_km: float) -> Reach:
-        """Walk from (lat, lon) up to limit_km; the walking distance to each of the targets (lats, lons)."""
+        """Walk from (lat, lon) up to limit_km; the walking distance to each of the targets (lats, lons).
+        WalkingUnavailable when the service cannot answer."""
         lats, lons = np.asarray(lats, dtype=float), np.asarray(lons, dtype=float)
-        ok, snap_t, node_t = self._snap(lats, lons)
-        snap, node = self.tree.query(_xy([lat], [lon]))
-        snap, node = float(snap[0]), int(node[0])
-        same_part = ok & (self.label[node_t] == self.label[node])
-        on_main = bool(self.label[node] == self.main)
-        km = np.full(len(lats), np.inf)
-        if snap > limit_km:
-            empty = np.zeros(0)
-            return Reach(km, snap, on_main, same_part, empty, empty)
-        along = dijkstra(self.graph, directed=True, indices=node, limit=limit_km - snap)
-        km[ok] = snap + along[node_t[ok]] + snap_t[ok]
-        km[km > limit_km] = np.inf
-        reached = np.isfinite(along)
-        return Reach(km, snap, on_main, same_part, self.lat[reached].astype(float), self.lon[reached].astype(float))
+        ok = np.isfinite(lats) & np.isfinite(lons)
+        asked = ok & (distance_km(lat, lon, lats, lons) <= limit_km * STRAIGHT_MARGIN)
+        idx = np.nonzero(asked)[0]
+        targets = [(round(float(lats[i]), 6), round(float(lons[i]), 6)) for i in idx]
+        key = (round(float(lat), 6), round(float(lon), 6), round(float(limit_km), 3), tuple(targets))
+        with self._lock:
+            if key in self._cache:
+                self._cache.move_to_end(key)
+                cached = self._cache[key]
+                return _expand(cached, len(lats), ok, idx)
 
-    def coverage(self, lats: np.ndarray, lons: np.ndarray) -> dict:
-        """How well the network serves the points: total km and shares within 100 m, 500 m, on the largest part."""
-        lats, lons = np.asarray(lats, dtype=float), np.asarray(lons, dtype=float)
-        ok, snap, node = self._snap(lats, lons)
-        return {"km": self.total_km, "within_100m": float((snap <= 0.1).mean()), "within_500m": float((snap <= 0.5).mean()),
-                "on_main": float((ok & (self.label[node] == self.main)).mean())}
+        origin_snap, status, results = self._matrix(lat, lon, targets)
+        limit_m = limit_km * 1000
+        located = status == 0
+        km = np.full(len(idx), np.inf)
+        routed = np.zeros(len(idx), dtype=bool)
+        for k, (along, snap, dest_status) in enumerate(results):
+            if not located or along is None or dest_status != 0:
+                continue
+            routed[k] = True
+            total = origin_snap + along + snap
+            if total <= limit_m:
+                km[k] = total / 1000
+        keep = True
+        try:
+            area = self._area(lat, lon, limit_m - origin_snap) if located else None
+        except _AreaFailed:
+            area, keep = None, False  # not kept: the next run tries the outline again
+        compact = Reach(km, origin_snap / 1000, located, routed, area)
+        if keep:
+            with self._lock:
+                self._cache[key] = compact
+                while len(self._cache) > max(self.cache_size, 1):
+                    self._cache.popitem(last=False)
+        return _expand(compact, len(lats), ok, idx)
 
-    def far(self, lats: np.ndarray, lons: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-        """Per point: km to the nearest network point, and whether that point is off the largest connected part."""
-        lats, lons = np.asarray(lats, dtype=float), np.asarray(lons, dtype=float)
-        ok, snap, node = self._snap(lats, lons)
-        return snap, ~(ok & (self.label[node] == self.main))
+    # ------------------------------------------------------------ the admin portal's status
+    def status(self) -> dict:
+        """Can the service be used now? For the admin portal (token, travel mode)."""
+        out = {"configured": True, "service": self.routing_url, "travel_mode": self.travel_mode, "ok": False,
+               "message": None}
+        try:
+            with self._lock:
+                self._mode = None  # read the service's description again
+            mode, attr, _ = self._walking_mode()
+            out.update(ok=True, travel_mode=mode.get("name", self.travel_mode), distance=attr)
+        except WalkingUnavailable as e:
+            out["message"] = str(e)
+        return out
 
 
-def usable(path: Path) -> bool:
-    """Can this routing file be read? False when it is missing, cut short or damaged."""
-    try:
-        with zipfile.ZipFile(path) as z:
-            return z.testzip() is None
-    except (OSError, zipfile.BadZipFile, EOFError):
-        return False
+class _SolveError(Exception):
+    def __init__(self, message: str, error: dict) -> None:
+        super().__init__(message)
+        text = " ".join([str(error.get("message") or ""), *map(str, error.get("details") or [])]).casefold()
+        self.no_solution = "no solution found" in text
 
 
-OUTLINE_SECTORS = 72
+class _AreaFailed(Exception):
+    pass
 
 
-def outline(lat: float, lon: float, lats: np.ndarray, lons: np.ndarray) -> dict | None:
-    """GeoJSON polygon around the points reached from (lat, lon), for the map only: the farthest point in each 5-degree
-    sector. None under 3 points or sectors. (PostGIS ST_ConcaveHull took over 20 seconds on 1,800 points.)"""
-    if len(lats) < 3:
+def _expand(compact: Reach, n: int, ok: np.ndarray, idx: np.ndarray) -> Reach:
+    """A Reach over the targets asked about -> over every target (not asked: beyond reach, not cut off)."""
+    km = np.full(n, np.inf)
+    km[idx] = compact.km
+    connected = ok.copy()
+    connected[idx] = compact.connected
+    return Reach(km, compact.snap_km, compact.on_main_network, connected, compact.area)
+
+
+def _origin(url: str) -> str:
+    p = urllib.parse.urlsplit(url)
+    return f"{p.scheme}://{p.netloc}" if p.scheme else url
+
+
+def from_settings(settings) -> EsriWalking | None:
+    """The walking service of the settings; None when it is not set up (no account and no token)."""
+    if not settings.esri_routing_url or not (settings.esri_token or (settings.esri_username and settings.esri_password)):
         return None
-    dx, dy = (np.asarray(lons, dtype=float) - lon) * _KX, (np.asarray(lats, dtype=float) - lat) * _KY
-    angle = np.arctan2(dy, dx)
-    sector = ((angle + math.pi) / (2 * math.pi) * OUTLINE_SECTORS).astype(int) % OUTLINE_SECTORS
-    far = np.hypot(dx, dy)
-    best = {}
-    for i in np.lexsort((far, sector)):  # the last of each sector is its farthest
-        best[int(sector[i])] = i
-    picks = [best[k] for k in sorted(best)]
-    if len(picks) < 3:
-        return None
-    ring = [[round(float(lons[i]), 5), round(float(lats[i]), 5)] for i in picks]
-    turns = angle[picks]
-    gaps = np.diff(np.r_[turns, turns[0] + 2 * math.pi])
-    if gaps.max() >= math.pi:  # the walk goes one way only: the outline still starts from the point
-        ring.insert(int(np.argmax(gaps)) + 1, [round(float(lon), 5), round(float(lat), 5)])
-    return {"type": "Polygon", "coordinates": [[*ring, ring[0]]]}
-
-
-def extract_date(path: Path) -> str | None:
-    """The date in an .osm.pbf's header ("2026-11-02"), None when it has none."""
-    import osmium  # noqa: PLC0415
-
-    with osmium.io.Reader(str(path), osmium.osm.osm_entity_bits.NOTHING) as reader:
-        stamp = reader.header().get("osmosis_replication_timestamp", "")
-    return stamp[:10] or None
-
-
-def _compact(graph: csr_matrix) -> csr_matrix:
-    """float64 lengths (what dijkstra works in, so it does not copy them on every search), 32-bit indices."""
-    graph.indices = graph.indices.astype(np.int32)
-    graph.indptr = graph.indptr.astype(np.int32)
-    return graph
+    return EsriWalking(settings.esri_routing_url, portal_url=settings.esri_portal_url, username=settings.esri_username,
+                       password=settings.esri_password, token=settings.esri_token, referer=settings.esri_referer,
+                       travel_mode=settings.esri_travel_mode, timeout=settings.esri_timeout,
+                       verify_ssl=settings.esri_verify_ssl, cache_size=settings.walking_cache_size)

@@ -11,6 +11,7 @@ from ..domain import analysis as A
 from ..domain import rates as RT
 from ..domain import teachers as T
 from ..services import repository as R
+from ..services.boundaries import place_key
 from .sql import none, reset_sequence
 
 
@@ -42,9 +43,10 @@ def refresh_schools(session: Session, newest_year: int) -> None:
 
 def _schools(session: Session, roster: pd.DataFrame, run: M.ImportRun, details: bool) -> dict[int, int]:
     """Schools by code (new ones added). Name, sector and coordinates are updated only from the newest year."""
-    sectors = {(d, s): i for d, s, i in session.execute(
+    sectors = {place_key(d, s): i for d, s, i in session.execute(
         select(M.District.name, M.Sector.name, M.Sector.id).join(M.District, M.District.id == M.Sector.district_id))}
-    rows = [{"mineduc_code": str(int(r.school_code)), "name": r.school_name, "sector_id": sectors.get((r.district, r.sector)),
+    rows = [{"mineduc_code": str(int(r.school_code)), "name": r.school_name,
+             "sector_id": sectors.get(place_key(r.district, r.sector)),
              "latitude": none(r.latitude), "longitude": none(r.longitude), "is_active": True, "import_run_id": run.id}
             for r in A._school_info(roster).itertuples(index=False)]
     stmt = pg_insert(M.School.__table__).values(rows)
@@ -165,12 +167,8 @@ def _clear_teachers(session: Session, year_id: int) -> None:
     session.execute(delete(M.SchoolStaff).where(M.SchoolStaff.academic_year_id == year_id))
 
 
-def publish_walking_network(session: Session, run: M.ImportRun, network) -> None:
-    """Nothing to write: the routing file is already beside the upload, and being live is what makes it used."""
-
-
 PUBLISH = {"school_data": publish_school_data, "catchment": publish_catchment, "nisr_population": publish_nisr,
-           "flow_rates": publish_flow_rates, "teachers": publish_teachers, "walking_network": publish_walking_network}
+           "flow_rates": publish_flow_rates, "teachers": publish_teachers}
 
 
 def withdraw_rows(session: Session, run: M.ImportRun) -> None:

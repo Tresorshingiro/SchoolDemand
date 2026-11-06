@@ -131,7 +131,7 @@ class Horizon:
 
 
 DEFAULT_HORIZON = Horizon()
-YEARS = DEFAULT_HORIZON.years  # 2026-2030: the Excel scripts and the file-based functions
+YEARS = DEFAULT_HORIZON.years  # 2026-2030: the file-based functions (and the tests that use them)
 
 SHORT_COURSES = {"L1", "L2"}  # TVET short courses, not projected
 # (level label, grades) in display order

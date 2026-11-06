@@ -17,7 +17,7 @@ router = APIRouter(prefix="/projection", tags=["projection"], dependencies=[Depe
 
 @router.get("/config", summary="Years, levels, grades, how new students enter, the default intake plan")
 def config(request: Request) -> Response:
-    return json_payload(request, store.payload("projection-config"), max_age=0)  # says whether a walking network is live
+    return json_payload(request, store.projection_config(), max_age=0)  # says whether planned schools are available
 
 
 @router.get("/default", summary="The projection with the default (catchment) intake plan")

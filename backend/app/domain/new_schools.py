@@ -6,8 +6,9 @@ A planned school is a point on the map with one level (or Pre-Primary and Primar
 an opening year and a walking distance. It joins the projection as an extra school with no students in the base
 year and its classrooms as rooms. From its opening year, every year, it takes the extra students of the crowded
 schools of its level within walking distance (its ring) — students their rooms cannot seat — up to its own places.
-Walking distance follows the road and path network (walking.py), never a straight line; a school with no route is not
-in the ring. Nothing else changes: the actual data never sees planned schools, and without any the projection is unchanged.
+Walking distance follows the Esri Rwanda road network (walking.py), never a straight line; a school with no route is
+not in the ring. Nothing else changes: the actual data never sees planned schools, and without any the projection is
+unchanged.
 """
 from __future__ import annotations
 
@@ -24,8 +25,11 @@ from . import rates as RT
 from . import walking as WK
 
 
+NO_WALKING = "Walking distance is not set up on this server."
+
+
 class NoWalkingNetwork(Exception):
-    """Planned schools need a published walking network."""
+    """Planned schools need the walking-distance service (walking.py), and it is not set up."""
 
 
 LEVEL_KEYS = {key: label for key, label, _, _ in A.LEVELS}  # "NUR" -> "Pre-Primary", ...
@@ -88,20 +92,14 @@ def with_planned(base: P.Base, planned: Sequence[PlannedSchool]) -> P.Base:
 
 
 # ---------------------------------------------------------------- the ring: schools within walking distance
-def distance_km(lat: float, lon: float, lats: np.ndarray, lons: np.ndarray) -> np.ndarray:
-    """Great-circle distance in km from one point to many (inf where a coordinate is missing)."""
-    p1, p2 = math.radians(lat), np.radians(lats)
-    a = (np.sin((p2 - p1) / 2) ** 2
-         + math.cos(p1) * np.cos(p2) * np.sin(np.radians(lons - lon) / 2) ** 2)
-    d = 2 * 6371.0 * np.arcsin(np.sqrt(np.clip(a, 0, 1)))
-    return np.where(np.isfinite(d), d, np.inf)
+distance_km = WK.distance_km  # great-circle km from one point to many
 
 
 def _coords(base: P.Base) -> tuple[np.ndarray, np.ndarray]:
     return (base.info["latitude"].to_numpy(dtype=float), base.info["longitude"].to_numpy(dtype=float))
 
 
-def reach_table(base: P.Base, planned: Sequence[PlannedSchool], network: WK.WalkingNetwork) -> list[WK.Reach]:
+def reach_table(base: P.Base, planned: Sequence[PlannedSchool], network: WK.Walking) -> list[WK.Reach]:
     """What each planned school reaches on foot, up to its walking distance, over every row of `base`
     (base = with_planned(...)). Calculated once per run: the network does not change between years."""
     lats, lons = _coords(base)
@@ -115,7 +113,7 @@ def _ring(base: P.Base, row: int, li: int, reach: WK.Reach, eligible: np.ndarray
     return np.nonzero(ok)[0]
 
 
-def rings(base: P.Base, planned: Sequence[PlannedSchool], network: WK.WalkingNetwork,
+def rings(base: P.Base, planned: Sequence[PlannedSchool], network: WK.Walking,
           reaches: Sequence[WK.Reach] | None = None) -> list[dict[str, list[int]]]:
     """For each planned school (base = with_planned(...)): level -> codes of the existing schools in its ring."""
     reaches = reaches if reaches is not None else reach_table(base, planned, network)
@@ -127,8 +125,8 @@ def rings(base: P.Base, planned: Sequence[PlannedSchool], network: WK.WalkingNet
 
 
 def unreachable(base: P.Base, planned: Sequence[PlannedSchool], reaches: Sequence[WK.Reach]) -> list[dict[str, int]]:
-    """For each planned school: level -> existing schools offering it, within its distance in a straight line, on a part
-    of the network not connected to the planned point's. Only reported to the planner; never decides who gives."""
+    """For each planned school: level -> existing schools offering it, within its distance in a straight line, that
+    the network has no route to. Only reported to the planner; never decides who gives."""
     n = len(base.info) - len(planned)
     lats, lons = _coords(base)
     existing = np.arange(len(base.info)) < n
@@ -302,16 +300,16 @@ def summary(before: pd.DataFrame, after: pd.DataFrame, info: pd.DataFrame, plann
 def project(roster: pd.DataFrame, intake: dict[str, pd.DataFrame] | None = None,
             planned: Sequence[PlannedSchool] = (), *, catchment: pd.DataFrame | None = None,
             base: P.Base | None = None, horizon: P.Horizon = P.DEFAULT_HORIZON, rates: RT.FlowRates | None = None,
-            capacity: int | None = None, network: WK.WalkingNetwork | None = None,
+            capacity: int | None = None, network: WK.Walking | None = None,
             reaches: Sequence[WK.Reach] | None = None,
             ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """P.project with the planned schools included (P.project itself when there are none; only planned schools need
-    the walking network: NoWalkingNetwork without it; `reaches` = reach_table when the caller has it). With `capacity`, planned schools form their class groups at that
-    size in every year; existing schools keep theirs."""
+    the walking distance: NoWalkingNetwork without it; `reaches` = reach_table when the caller has it). With
+    `capacity`, planned schools form their class groups at that size in every year; existing schools keep theirs."""
     if not planned:
         return P.project(roster, intake, catchment=catchment, base=base, horizon=horizon, rates=rates, capacity=capacity)
     if network is None and reaches is None:
-        raise NoWalkingNetwork("No walking network published yet.")
+        raise NoWalkingNetwork(NO_WALKING)
     b = with_planned(base if base is not None else P.base_schools(roster), planned)
     fallback = np.tile([float(P.CAPACITY[A.GRADE_TO_LEVEL[g]]) for g in P.GRADES], (len(b.info), 1))
     if capacity:
