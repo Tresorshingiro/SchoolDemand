@@ -40,8 +40,10 @@ services:
       ADMIN_TOKEN: ${ADMIN_TOKEN:-}
       CORS_ORIGINS: ${CORS_ORIGINS:-}
       UPLOAD_DIR: /uploads
+      ESRI_USERNAME: ${ESRI_USERNAME:-}   # planned schools' walking distance (Esri Rwanda routing service)
+      ESRI_PASSWORD: ${ESRI_PASSWORD:-}
     volumes:
-      - ../data-sources:/data:ro   # source files for the import job (Version 2.xlsx, catchments, boundaries)
+      - ../data-sources:/data:ro   # source files for the import job (Version 2.xlsx, catchments, rates, teachers)
       - uploads:/uploads           # files uploaded in the admin portal (the import history and the way back)
     expose:
       - "8000"

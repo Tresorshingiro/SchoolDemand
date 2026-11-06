@@ -12,6 +12,7 @@ dist/
 # Generated outputs and caches
 output/
 *.pkl
+*.pbf
 
 # Local settings
 .env
@@ -20,6 +21,7 @@ output/
 # Office lock files and backups
 ~$*
 data-uploads/
-
+data-sources/Repetition and dropout rates.xlsx
+data-sources/Teachers.xlsx
 
 docs

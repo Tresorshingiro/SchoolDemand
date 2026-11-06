@@ -18,9 +18,8 @@ viewers see everything and try plans — see
 | `backend/` | FastAPI API, database models and migrations (Alembic), import job, the analysis and projection engine, tests — [backend/README.md](backend/README.md) |
 | `dashboard/` | React + TypeScript + Tailwind + ArcGIS + ECharts; reads everything from the API — [dashboard/README.md](dashboard/README.md) |
 | `deploy/` | Docker Compose (database + API + nginx) and the Windows / IIS setup — [deploy/README.md](deploy/README.md) |
-| `data-sources/` | Development data until the MINEDUC / NISR data is connected: `Version 2.xlsx` (2026 roster), `Chachement area.xlsx` (children aged 3 per pre-primary catchment), `boundaries/` (districts, sectors, country) |
+| `data-sources/` | Development data until the MINEDUC / NISR data is connected: `Version 2.xlsx` (2026 roster), `Chachement area.xlsx` (children aged 3 per pre-primary catchment), `Repetition and dropout rates.xlsx` (MINEDUC, per district), `Teachers.xlsx` (MINEDUC teachers per school and level). Not from files: the district and sector boundaries (Education Mapping's feature service on the MINEDUC GIS portal) and planned schools' walking distance (the Esri Rwanda routing service, `ESRI_USERNAME` / `ESRI_PASSWORD`) |
 | `database/schema.dbml` | Full database design (paste into dbdiagram.io); the backend builds the part in use today |
-| `scripts/` | Excel workbooks (`build_workbook.py`, `build_projection_workbook.py`, …) and `build_boundaries.py`; they use the same engine as the API |
 
 ## Run it on this PC (development)
 

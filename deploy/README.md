@@ -12,8 +12,10 @@ docker compose -f deploy/docker-compose.yml --env-file deploy/.env run --rm api 
 docker compose -f deploy/docker-compose.yml --env-file deploy/.env restart api
 ```
 
-Open `http://SERVER:8080` and sign in with a MINEDUC GIS portal account: every portal user can sign in and becomes an
-administrator at their first sign-in (see [backend/README.md](../backend/README.md#users-and-sign-in)). The API must
+Open `http://SERVER:8080` and sign in with a MINEDUC GIS portal account: every portal user can sign in and becomes a
+viewer at their first sign-in; an administrator gives the admin role in the admin portal → Users, or
+`python -m app.users role <username> admin` for the very first one (see
+[backend/README.md](../backend/README.md#users-and-sign-in)). The API must
 reach `https://gh.space.gov.rw/portal` (`PORTAL_URL`) over HTTPS. Existing installations: the email / password
 accounts made before can no longer sign in; they stay in the user list (and on the history), disable them there. Three containers: `db` (PostgreSQL 17 + PostGIS, data in the `pgdata` volume), `api`
 (FastAPI; runs the migrations on start), `web` (nginx: the dashboard, `/api` forwarded to the API). The import reads
@@ -51,7 +53,9 @@ the files in `data-sources/` (mounted read-only); files uploaded in the admin po
    `index.html`.
 
 The build lives under the sub-path `/school/` (an IIS application such as `https://server/school/`): the pages and the
-API (`/school/api`) work under it. For another path, or the root of a site, build with it:
+API (`/school/api`) work under it. On a Windows PC where npm runs scripts through Git Bash, a `VITE_BASE` or
+`VITE_API_URL` that starts with `/` is turned into a Windows folder path (`/Users/.../Git/school/`): set
+`$env:MSYS_NO_PATHCONV='1'` first, and check `dist\index.html` refers to `/school/assets/...` before deploying. For another path, or the root of a site, build with it:
 `$env:VITE_BASE='/'; npm run build` (the Docker image does this for its nginx). If the API is on
 another host, build with `VITE_API_URL` (e.g. `https://api-server/api`) and set `CORS_ORIGINS` for the API; the sign-in
 cookie then needs both on the same site (same domain).
@@ -70,15 +74,50 @@ Education Mapping shows the dashboard in a frame. Two ways to keep the sign-in w
    Safari blocks every cookie of a frame from another site, so use 2. there.
 2. **The dashboard served from gh.space.gov.rw** (External URL `https://gh.space.gov.rw/school/dashboard`). The frame is
    then on the same site as Education Mapping and any browser keeps the cookie; the data stays on the MINEDUC server.
-   On the Geohub server, the IIS application `school` holds `dashboard\dist\*` built with
-   `$env:VITE_BASE='/school/'; npm run build` (no `VITE_API_URL`) plus `deploy\windows\geohub-web.config` renamed
-   `web.config`: it forwards `/school/api/*` to `https://gis.mineduc.gov.rw/api/*`. Needs URL Rewrite and ARR (Enable
-   proxy), the server variables `HTTP_HOST` and `HTTP_X_FORWARDED_PROTO` allowed in URL Rewrite → View Server
-   Variables at the server level, and the Geohub server able to reach `https://gis.mineduc.gov.rw`. Check with
+   On the Geohub server, the IIS application `school` holds `dashboard\dist\*` built with a plain
+   `npm run build` (`/school/` is the default base; no `VITE_API_URL`) plus `deploy\windows\geohub-web.config` renamed
+   `web.config` (once; later builds copy only the `dist` files and leave it in place): it forwards `/school/api/*` to
+   `https://gis.mineduc.gov.rw/api/*`. It changes nothing outside `school`: it needs URL Rewrite and ARR (Enable proxy),
+   sets no server variables (the `allowedServerVariables` section is locked there and would answer 500.52 everywhere),
+   and the Geohub server able to reach `https://gis.mineduc.gov.rw`. Check with
    `https://gh.space.gov.rw/school/api/health`: it must answer JSON, not the page.
 
-Either way users sign in once more inside the frame, with the same portal account as Education Mapping ("Remember me"
-keeps them signed in for 30 days); signing in only once needs Education Mapping to pass its portal token to the page.
+With 2. users sign in only once: the dashboard goes through the portal's sign-in (the app item "School Demand &
+Demographics", client ID `zCxgnSvJJTL8iCD1`, approved for the organization), so someone signed in to Education Mapping
+comes straight in. With 1. they sign in once more inside the frame, with the same portal account ("Remember me" keeps
+them signed in for 30 days).
+
+## Updating an installation to repetition, dropout and teachers
+
+The update adds three tables (the API runs the migration on start). Until a repetition and dropout file is published
+the API serves no data (the projection needs the rates): in the admin portal → Data, upload the MINEDUC rates workbook
+(Repetition and dropout) and the teachers file (Teachers, school year 2026), check, publish. Or run
+`python -m etl.load_version2` with the two files in `data-sources/`: it publishes only kinds whose live data came
+from the same file names, so school data and catchment uploaded in the admin portal stay as they are.
+
+## Updating an installation to walking distance from Esri Rwanda
+
+Planned schools' walking distance now comes from the Esri Rwanda routing service; the walking network is no longer
+uploaded. The update:
+
+1. Set the Esri Rwanda account on the server: `ESRI_USERNAME` and `ESRI_PASSWORD` in `deploy/.env` (Docker) or
+   `backend/.env` (Windows service). The server must reach `https://esrirw.rw` over HTTPS. Without them planned schools
+   are unavailable and the rest of the dashboard works.
+2. Install `requirements.txt` again (`osmium` and `scipy` are no longer needed) and restart the API: migration 0010
+   removes the walking-network imports from the history. Their files in `UPLOAD_DIR` (`*.pbf`,
+   `import-<id>.network.npz`) are no longer read and can be deleted.
+3. Admin portal → Data: the *Walking distance (Esri Rwanda)* card must say Connected.
+
+Uploads are back to 50 MB: the `web.config` / `geohub-web.config` / `nginx.conf` in this repository set that.
+
+## Updating an installation to boundaries from Education Mapping
+
+Districts and sectors now come from Education Mapping's *Administrative boundaries corrected* feature service on the
+MINEDUC GIS portal, not from `data-sources/boundaries/`. Load them once, then restart the API:
+`python -m etl.boundaries` (from `backend/`), or with Docker
+`docker compose -f deploy/docker-compose.yml --env-file deploy/.env run --rm api python -m etl.boundaries`. Only the
+boundaries change; 44 sector names change case (Ngororero, Nyagatare and Rulindo: "BWIRA" becomes "Bwira") and keep
+their schools. The server already reaches `gh.space.gov.rw` for sign-in.
 
 ## After an import
 
@@ -93,4 +132,7 @@ Restart the API (`docker compose … restart api`, or restart the *SchoolPlannin
 - [ ] Check that the server reaches the portal: `Invoke-WebRequest https://gh.space.gov.rw/portal/sharing/rest/info?f=json`.
       Nobody can see the data without a portal account. Make people viewers in the admin portal → Users when they
       should not manage data, accounts or the shared plans.
+- [ ] Set the Esri Rwanda account (`ESRI_USERNAME`, `ESRI_PASSWORD`) for planned schools' walking distance, and check
+      the server reaches it: `Invoke-WebRequest https://esrirw.rw/portal/sharing/rest/info?f=json`; then admin portal →
+      Data → *Walking distance (Esri Rwanda)* says Connected.
 - [ ] Schedule a database backup.
