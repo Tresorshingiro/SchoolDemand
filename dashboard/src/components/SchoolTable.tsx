@@ -243,7 +243,7 @@ export default function SchoolTable({ rows, mode, selected, onSelect, fullDay }:
       {printing ? (
         <p className="px-4 py-2 text-xs text-muted">
           First {fmt(Math.min(PRINT_ROWS, view.length))} of {fmt(view.length)} schools, sorted by{' '}
-          {colLabel(COLS.find((c) => c.key === sort.key)!).toLowerCase()}. The full list is in the dashboard and the Excel workbook.
+          {colLabel(COLS.find((c) => c.key === sort.key)!).toLowerCase()}. The full list is in the dashboard.
         </p>
       ) : (
         <Pager page={current} pages={pages} total={view.length} onChange={setPage} />

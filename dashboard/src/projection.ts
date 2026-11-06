@@ -32,7 +32,7 @@ export interface ProjectionBase {
   combos: string[][]; // per level: its combinations, most students first (empty = no combinations)
   /** Repetition and dropout of each district (and Rwanda) the projection applies: [repetition, dropout] as shares. */
   rates: { schoolYear: string; districts: Record<string, [number, number]> };
-  /** A walking network is published: planned new schools are available. */
+  /** Walking distance (the Esri Rwanda routing service) is set up on the server: planned new schools are available. */
   walkingNetwork: boolean;
 }
 
@@ -64,7 +64,7 @@ export const assumptionsReport = (a: Assumptions) =>
 /** New students per entry grade (N1) and district, for years[1..]. */
 export type Intake = Record<string, Record<string, number[]>>;
 
-/** Asked each time the page opens: an admin may just have published data, such as the walking network. */
+/** Asked each time the page opens: an admin may just have published data. */
 export const loadProjectionBase = () => getJson<ProjectionBase>('/projection/config');
 
 const copyIntake = (v: Intake): Intake =>

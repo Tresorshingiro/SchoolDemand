@@ -67,7 +67,7 @@ export default function NewSchoolImpact({ planned, before, after, level, year, m
         )}
         {!p.on_main_network && (
           <div className="text-xs text-[var(--deficit)]">
-            This point is on a path not connected to the main network. Nearby schools may be reachable in reality; move it onto a connected road or path.
+            The routing service could not place this point on the road network. Move it closer to a road or path.
           </div>
         )}
         {(p.unreachable[String(level)] ?? 0) > 0 && (

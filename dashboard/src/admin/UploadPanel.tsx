@@ -5,7 +5,6 @@ import { KIND_LABEL, YEAR_KINDS, uploadFile, type DataKind } from './api';
 import { btn as buttons, field } from './ui';
 
 const btn = buttons.secondary;
-const NETWORK_FILE = { pattern: /\.osm\.pbf$/i, wrong: 'Upload the OpenStreetMap extract, an .osm.pbf file.', hint: '.osm.pbf', accept: '.pbf', mb: 200 };
 const TABLE_FILE = { pattern: /\.(xlsx|csv)$/i, wrong: 'Upload an .xlsx or .csv file.', hint: '.xlsx or .csv', accept: '.xlsx,.csv', mb: 50 };
 
 /** Side panel: choose a file (and the school year for school data), upload it, then open its check. */
@@ -19,7 +18,7 @@ export default function UploadPanel({ kind, suggestedYear, onClose }: {
   const [year, setYear] = useState(String(suggestedYear));
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
-  const rule = kind === 'walking_network' ? NETWORK_FILE : TABLE_FILE;
+  const rule = TABLE_FILE;
 
   async function submit(event: FormEvent) {
     event.preventDefault();

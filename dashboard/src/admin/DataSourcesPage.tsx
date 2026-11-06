@@ -3,7 +3,9 @@ import { Link } from 'react-router-dom';
 import {
   Download, FileSpreadsheet, Footprints, GraduationCap, History, MapPin, Repeat, School, Upload, Users2, type LucideIcon,
 } from 'lucide-react';
-import { listSources, templateUrl, type DataKind, type ImportRun, type SourceCard } from './api';
+import {
+  listSources, templateUrl, walkingStatus, type DataKind, type ImportRun, type SourceCard, type WalkingStatus,
+} from './api';
 import UploadPanel from './UploadPanel';
 import { Alert, PageHeader, Panel, Pill, btn } from './ui';
 
@@ -15,8 +17,42 @@ export const KIND_INFO: Record<DataKind, { icon: LucideIcon; text: string }> = {
   nisr_population: { icon: Users2, text: 'Children aged 3 per district and year: the totals of the default N1 plan.' },
   flow_rates: { icon: Repeat, text: 'District repetition and dropout rates: how students move between grades in the projection.' },
   teachers: { icon: GraduationCap, text: 'Teachers per school and level of a school year: pupils per teacher on the dashboard.' },
-  walking_network: { icon: Footprints, text: 'OpenStreetMap roads and paths (Rwanda .osm.pbf extract): how far planned schools reach on foot. Planned schools need it.' },
 };
+
+/** Planned schools' walking distance: asked from the Esri Rwanda routing service, nothing to upload. */
+function WalkingCard() {
+  const [s, setS] = useState<WalkingStatus | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    walkingStatus().then(setS).catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)));
+  }, []);
+  const state = error ? { tone: 'red' as const, text: 'Unknown' }
+    : !s ? { tone: 'grey' as const, text: 'Checking…' }
+      : s.ok ? { tone: 'green' as const, text: 'Connected' }
+        : s.configured ? { tone: 'red' as const, text: 'Not answering' } : { tone: 'amber' as const, text: 'Not set up' };
+  return (
+    <Panel className="p-5">
+      <div className="flex flex-wrap items-start gap-4">
+        <span className="grid h-10 w-10 shrink-0 place-items-center rounded-lg bg-[var(--accent-soft)] text-accent">
+          <Footprints size={20} aria-hidden />
+        </span>
+        <div className="min-w-0 flex-1">
+          <h2 className="text-[15px] font-semibold text-ink">Walking distance (Esri Rwanda)</h2>
+          <p className="mt-0.5 text-[13px] text-muted">
+            How far planned schools reach on foot, along the Esri Rwanda road network (OpenStreetMap roads, kept up to
+            date by Esri Rwanda). Asked from their routing service each time: nothing to upload.
+          </p>
+        </div>
+        <Pill tone={state.tone}>{state.text}</Pill>
+      </div>
+      <div className="mt-3 space-y-1 text-[12px] text-muted sm:pl-14">
+        {s?.service && <p className="break-all">Service: {s.service}{s.travel_mode ? ` · ${s.travel_mode} mode` : ''}</p>}
+        {(error || s?.message) && <p className="text-[var(--deficit)]">{error ?? s?.message}</p>}
+        {s && !s.ok && <p>Planned schools are unavailable on the dashboard until it answers; everything else works.</p>}
+      </div>
+    </Panel>
+  );
+}
 
 function LiveRow({ run }: { run: ImportRun }) {
   return (
@@ -64,11 +100,9 @@ export default function DataSourcesPage() {
                   <p className="mt-0.5 text-[13px] text-muted">{KIND_INFO[c.kind].text}</p>
                 </div>
                 <div className="flex gap-2">
-                  {c.kind !== 'walking_network' && (
-                    <a className={btn.secondary} href={templateUrl(c.kind)}>
-                      <Download size={15} aria-hidden /> Template
-                    </a>
-                  )}
+                  <a className={btn.secondary} href={templateUrl(c.kind)}>
+                    <Download size={15} aria-hidden /> Template
+                  </a>
                   <button type="button" className={btn.primary} onClick={() => setUpload(c.kind)}>
                     <Upload size={15} aria-hidden /> Upload
                   </button>
@@ -80,12 +114,12 @@ export default function DataSourcesPage() {
                     {c.kind === 'nisr_population' ? 'Nothing published: the default N1 plan uses the catchment totals.' : 'Nothing published yet.'}
                   </p>
                 )}
-                {c.missing_file && <Alert tone="error">The network file is missing. Upload the file again and publish it.</Alert>}
                 {c.connector && <p className="text-[12px] text-muted">MINEDUC API connector: {c.connector}.</p>}
               </div>
             </Panel>
           );
         })}
+        {cards.length > 0 && <WalkingCard />}
       </div>
       {upload && (
         <UploadPanel kind={upload}

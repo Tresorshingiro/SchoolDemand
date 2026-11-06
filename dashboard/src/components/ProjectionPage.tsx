@@ -7,6 +7,7 @@ import {
   type Assumptions, type Intake, type ProjectionBase, type ProjectedYear, type Scenario, type ScenarioSummary,
 } from '../projection';
 import type { Mode } from '../theme';
+import { ApiError } from '../api';
 import { isAdmin, useAuth } from '../auth';
 import {
   copySchoolPlan, createSchoolPlan, DEFAULT_KM, defaultClassrooms, deleteSchoolPlan, getSchoolPlan, listSchoolPlans,
@@ -62,7 +63,7 @@ function savePlan(v: StoredPlan) {
 }
 
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
-const NO_NETWORK = 'No walking network published yet.'; // the API's answer to planned schools without a network
+const NO_NETWORK = 'Walking distance is not set up on this server.'; // the API's answer when planned schools can't be calculated
 
 /** "20.4% repeat, 4.9% drop out" from [repetition, dropout] shares. */
 const rateText = (r: [number, number] | undefined) =>
@@ -383,7 +384,9 @@ export default function ProjectionPage({ current, mode }: { current: Dataset; mo
   const [before, setBefore] = useState<ProjectedYear[] | null>(null);
   const [computing, setComputing] = useState(false);
   const [runError, setRunError] = useState<string | null>(null);
-  // No walking network published: schools remembered in the browser are not sent, so the page still loads
+  // The walking-distance service did not answer for the planned schools: they were switched off, the rest still runs
+  const [walkingError, setWalkingError] = useState<string | null>(null);
+  // Walking distance not set up: schools remembered in the browser are not sent, so the page still loads
   const networkLive = base?.walkingNetwork ?? false;
   const activeSchools = useMemo(() => (schoolsOn && networkLive ? schools : []), [schoolsOn, networkLive, schools]);
   useEffect(() => {
@@ -401,12 +404,17 @@ export default function ProjectionPage({ current, mode }: { current: Dataset; mo
         setPlanned(r.planned);
         setBefore(without?.years ?? null);
         setRunError(null);
+        if (activeSchools.length) setWalkingError(null);
       })
       .catch((e: unknown) => {
         if (cancelled) return;
-        // The network went while this page was open: run again without the planned schools instead of failing the page
+        // Walking distance went while this page was open: run again without the planned schools instead of failing the page
         if (message(e) === NO_NETWORK) setBase((b) => (b ? { ...b, walkingNetwork: false } : b));
-        else setRunError(message(e));
+        // The Esri Rwanda service did not answer (503): the same, switched off until someone switches them on again
+        else if (activeSchools.length && e instanceof ApiError && e.status === 503) {
+          setWalkingError(`New schools switched off: ${message(e)}`);
+          setSchoolsOn(false);
+        } else setRunError(message(e));
       })
       .finally(() => !cancelled && setComputing(false));
     return () => {
@@ -637,6 +645,7 @@ export default function ProjectionPage({ current, mode }: { current: Dataset; mo
             </span>
           )}
           {runError && !computing && <span className="text-xs text-[var(--deficit)]" role="alert">{runError}</span>}
+          {walkingError && !computing && <span className="text-xs text-[var(--deficit)]" role="alert">{walkingError}</span>}
           <span className="hidden text-xs text-muted sm:inline">Intake: {presetLabel}{tried}</span>
           <AssumptionControls value={assumptions} onChange={setAssumptions} />
           <label className="flex items-center gap-2 text-sm text-ink2">

@@ -31,9 +31,9 @@ export interface PlannedOut {
   km: number;
   ring: Record<string, number[]>; // level index -> codes of the existing schools within walking distance
   area: { type: 'Polygon' | 'MultiPolygon'; coordinates: unknown } | null; // outline of the walking area, for the map only
-  unreachable: Record<string, number>; // level index -> nearby schools with no walking route on the map
+  unreachable: Record<string, number>; // level index -> nearby schools the road network has no route to
   snap_km: number; // from the point to the nearest mapped road or path
-  on_main_network: boolean; // that road or path is on the main connected network
+  on_main_network: boolean; // the routing service could place the point on the road network
 }
 
 /** Walking distance by level key: 2 km for Pre-Primary and Primary, 3 km for the others. */

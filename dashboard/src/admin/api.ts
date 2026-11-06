@@ -41,19 +41,18 @@ export function listAudit(p: { before?: number; userId?: number; action?: string
 
 /* ------------------------------------------------------------------ data sources (backend/app/routers/data_admin.py) */
 
-export type DataKind = 'school_data' | 'catchment' | 'nisr_population' | 'flow_rates' | 'teachers' | 'walking_network';
+export type DataKind = 'school_data' | 'catchment' | 'nisr_population' | 'flow_rates' | 'teachers';
 export const KIND_LABEL: Record<DataKind, string> = {
   school_data: 'School data (MINEDUC)',
   catchment: 'Catchment (GIS)',
   nisr_population: 'NISR population (age 3, district)',
   flow_rates: 'Repetition and dropout (MINEDUC)',
   teachers: 'Teachers (MINEDUC)',
-  walking_network: 'Walking network (OpenStreetMap)',
 };
 /** Kinds uploaded for one school year (the upload asks for it). */
 export const YEAR_KINDS: DataKind[] = ['school_data', 'teachers'];
 /** Kinds the projection needs: replaced by publishing another file, never withdrawn. */
-export const REQUIRED_KINDS: DataKind[] = ['catchment', 'flow_rates', 'walking_network'];
+export const REQUIRED_KINDS: DataKind[] = ['catchment', 'flow_rates'];
 
 export interface ImportRun {
   id: number;
@@ -113,7 +112,15 @@ export interface SourceCard {
   label: string;
   live: ImportRun[];
   connector: string | null;
-  missing_file: boolean; // walking network: it is live but its routing file was lost
+}
+
+/** Planned schools' walking distance: the Esri Rwanda routing service (nothing to upload), and whether it answers. */
+export interface WalkingStatus {
+  configured: boolean; // an account (or token) is set on the server
+  ok: boolean; // the service answered with its walking travel mode
+  service?: string;
+  travel_mode?: string;
+  message: string | null;
 }
 
 const DATA = '/admin/data';
@@ -125,6 +132,7 @@ export const STATUS_LABEL: Record<string, string> = {
 };
 
 export const listSources = () => getJson<SourceCard[]>(`${DATA}/sources`);
+export const walkingStatus = () => getJson<WalkingStatus>(`${DATA}/walking`);
 export const listImports = (kind?: DataKind) => getJson<ImportRun[]>(`${DATA}/imports${kind ? `?kind=${kind}` : ''}`);
 export const getImport = (id: number) => getJson<ImportDetail>(`${DATA}/imports/${id}`);
 export const importAction = (id: number, action: 'publish' | 'discard' | 'recheck' | 'withdraw') =>

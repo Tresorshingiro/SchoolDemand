@@ -250,7 +250,7 @@ interface Hover {
 export interface MapPlanning {
   planned: PlannedOut[]; // drawn with their walking area (also when switched off: dimmed)
   dimmed: boolean; // the plan of new schools is switched off
-  available: boolean; // false: no walking network published, no new school can be planned
+  available: boolean; // false: walking distance is not set up on the server, no new school can be planned
   reachable: { latitude: number; longitude: number }[]; // the schools within walking distance, highlighted on the map
   placing: boolean; // the next click on the map places a new school
   draft: { latitude: number; longitude: number } | null; // the school being placed or edited
@@ -273,15 +273,15 @@ interface Props {
 
 const PLANNED_COLOR = [250, 178, 25] as const; // amber, as the outline of the picked area
 
-/** The rings of the walking area's outline (GeoJSON Polygon or MultiPolygon). */
+/** The rings of the walking area's outline (GeoJSON Polygon or MultiPolygon), as ArcGIS draws them. */
 function areaRings(area: PlannedOut['area']): number[][][] {
   if (!area) return [];
-  const rings = area.type === 'Polygon' ? (area.coordinates as number[][][]) : (area.coordinates as number[][][][]).flat();
-  // GeoJSON outer rings run counter-clockwise, ArcGIS expects them clockwise
-  return rings.map((ring) => {
-    const turn = ring.slice(1).reduce((sum, p, i) => sum + (p[0] - ring[i][0]) * (p[1] + ring[i][1]), 0);
-    return turn < 0 ? [...ring].reverse() : ring;
-  });
+  const polygons = area.type === 'Polygon' ? [area.coordinates as number[][][]] : (area.coordinates as number[][][][]);
+  // ArcGIS: outer rings clockwise, holes (the polygon's later rings: places out of reach inside) counter-clockwise
+  return polygons.flatMap((rings) => rings.map((ring, k) => {
+    const clockwise = ring.slice(1).reduce((sum, p, i) => sum + (p[0] - ring[i][0]) * (p[1] + ring[i][1]), 0) > 0;
+    return clockwise === (k === 0) ? ring : [...ring].reverse();
+  }));
 }
 
 /** A planned school's pin, name and the area reachable on foot (none while it is only being placed). */
@@ -828,14 +828,14 @@ export default function SchoolMap({ rows, mode, selected, onSelect, district = '
               {planning.placing ? 'Click on the map… (Esc to cancel)' : '+ Plan a new school'}
             </button>
           ) : (
-            <div className={`${panel} px-3 py-1.5 text-xs text-muted`}>No walking network published yet.</div>
+            <div className={`${panel} px-3 py-1.5 text-xs text-muted`}>Planning new schools is unavailable: walking distance is not set up.</div>
           )}
           {planning.form && <div className={`${panel} max-h-[520px] w-full overflow-y-auto`}>{planning.form}</div>}
         </div>
       )}
       {ready && (planning?.planned.length ?? 0) > 0 && (
         <div className="pointer-events-none absolute bottom-7 right-3 z-10 rounded bg-black/55 px-1.5 py-0.5 text-[10px] text-white">
-          Walking network © OpenStreetMap contributors
+          Walking distance: Esri Rwanda road network · © OpenStreetMap contributors
         </div>
       )}
       {ready && planning?.placing && (

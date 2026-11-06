@@ -66,9 +66,9 @@ with `VITE_API_URL`. Viewers need internet access to `js.arcgis.com` and `servic
   or a class (10+ short … 10+ spare) to hide or show those schools; it holds the Clusters / Schools switch and the
   District / Sector boundary checkboxes. **Find a school** (top left) searches the schools in view.
 - District names show from about zoom 9 (at national zoom the clusters and district outlines carry the view).
-- Boundaries: `GET /api/boundaries/{country,districts,sectors}` (PostGIS), loaded from `data-sources/boundaries/` by
-  the import job; those files come from `python scripts/build_boundaries.py` (geoBoundaries, Open Data Rwanda 2012,
-  CC BY 4.0, names matched to the roster).
+- Boundaries: `GET /api/boundaries/{country,districts,sectors}` (PostGIS), loaded by the import job from Education
+  Mapping's *Administrative boundaries corrected* feature service on the MINEDUC GIS portal (boundaries as of 2022;
+  `python -m etl.boundaries` refreshes them).
 
 ## Page
 
@@ -104,15 +104,14 @@ New students:
   table opens, saves, saves as and deletes plans stored in the database — shared with everyone who signs in (each
   plan records who created it). The browser remembers the plan on screen (and unsaved edits) between visits.
 
-  Excel copy of a plan: `python scripts/build_projection_workbook.py --intake intake_plan.csv`.
-
 ## Planned new schools and walking distance
 
-A planned school takes extra students only from crowded schools within walking distance along OpenStreetMap roads and
-paths (2 km for Pre-Primary and Primary, 3 km for other levels, editable), counting the short way to the nearest path at
-each end. The map draws the area reachable on foot after calculation, and schools with no route are counted apart. Slope
-and walking time are not considered. Without a published walking network (admin portal → Data) planned schools are
-unavailable and the rest of the dashboard works.
+A planned school takes extra students only from crowded schools within walking distance along the Esri Rwanda road
+network (its routing service, in Walking mode; 2 km for Pre-Primary and Primary, 3 km for other levels, editable),
+counting the short way to the nearest road at each end. The API asks the service; nothing is uploaded. The map draws the
+area reachable on foot after calculation, and schools with no route are counted apart. Slope and walking time are not
+considered. Without the service (not set up on the server, or not answering) planned schools are unavailable and the
+rest of the dashboard works.
 
 ## Trying other assumptions
 
@@ -142,9 +141,8 @@ snapshot and the first 25 schools of the table in its current sort. It opens the
 
 ## Numbers
 
-All figures come from `backend/app/domain/analysis.py` and `projection.py` — one engine, used by the API and by the
-Excel scripts (`School_Classroom_Analysis_2026.xlsx`, `Classroom_Projection_2026_2030_*.xlsx`), so the dashboard and
-workbooks always agree. The browser only displays and filters them.
+All figures come from `backend/app/domain/analysis.py` and `projection.py`, run by the API. The browser only displays
+and filters them.
 Capacity is 46 students per classroom for every level (`LEVELS` in `analysis.py`).
 
 To update the data, replace the files in `data-sources/` (same columns), run the import job
